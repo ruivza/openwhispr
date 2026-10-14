@@ -76,6 +76,38 @@ The commands above run the desktop application, which remains at the repository 
 
 Desktop audio imports using your own API key automatically split files above the provider's single-request limit (25 MiB, or 14 MiB for Gemini) on your device, transcribe chunks in parallel with the selected provider, and merge the results in order. Custom and self-hosted imports also split above 25 MiB. This does not require an OpenWhispr subscription; your provider's billing and quotas still apply. The shared pipeline uses four-minute MP3 chunks, up to five concurrent chunk requests, retries, cancellation, and explicit warnings for missing audio. Provider timestamps are offset to the original recording; speaker identities inferred independently in different chunks remain separate. OpenWhispr Cloud retains its existing plan limits, and mobile import limits are unchanged.
 
+## GitHub builds and local macOS signing
+
+This fork's desktop workflows build without publisher certificates. Pushes to `main`/`develop`, pull requests, and manual runs keep the existing quality checks. Version tags and the tagged-build workflow use the same unsigned build pipeline; neither workflow publishes a GitHub Release.
+
+Download the artifacts from the completed GitHub Actions run (retained for 7 days):
+
+- `windows-unsigned-build`: the unsigned NSIS installer and unpacked application. Windows does not require code signing to build or install this package; it may show an unknown-publisher or SmartScreen prompt.
+- `macos-arm64-unsigned-build` / `macos-x64-unsigned-build`: unsigned DMG/ZIP packages and an `*-unsigned-app.tar.gz` archive for the local release script. The archive preserves executable permissions and framework symlinks and includes the build's version, commit, and architecture.
+- `linux-build`: the Linux packages.
+
+GitHub needs no Azure signing credentials, Apple certificate, or notarization key. The CI-specific builder configs disable signing without changing the base config used by existing local signing setups. For manual unsigned builds, use `npm run build:win -- --publish never --config electron-builder.unsigned-win.json` or `npm run build:mac -- --publish never --config electron-builder.unsigned-mac.json`.
+
+### Sign and release from your Mac
+
+This follows the same `release-local.sh --run ... --publish` workflow as SpeechDock. Install GitHub CLI (`gh`), Python 3.9+, Xcode command-line tools, and your Developer ID Application certificate with its private key. Log in with `gh auth login`. Use an existing notarytool Keychain profile, or create one with `xcrun notarytool store-credentials openwhispr-release`. A profile such as `speechdock-release` can be reused for the same Apple account/team; its name is not tied to an application.
+
+1. Set `package.json` and the lockfile to the intended release version, commit and push the changes, then push a matching **new** `vX.Y.Z` tag. Existing tags/releases are never replaced.
+2. Wait for **Build tagged packages (unsigned)** to finish successfully and copy its Actions run ID.
+3. On your Mac, fetch and check out that exact tag, then run:
+
+```bash
+git fetch origin tag vX.Y.Z
+git switch --detach vX.Y.Z
+NOTARY_PROFILE=speechdock-release bash scripts/release-local.sh --run RUN_ID --publish
+```
+
+Use the run ID from **this OpenWhispr repository**, not an old SpeechDock run. The script verifies the remote tag, local commit, successful workflow, and artifact metadata. It signs Electron helpers, frameworks, native modules, and the app from the inside out using `resources/mac/entitlements.mac.plist`; then it notarizes and staples the app, creates and signs a DMG, notarizes/staples the DMG, and checks Gatekeeper. Both `arm64` and `x64` are processed by default. No app compilation runs locally.
+
+Without `--publish`, signed DMGs stay in a new directory under `build/local-release.*/output`. Add `--arch arm64` or `--arch x64` to test just one Mac architecture locally. Publishing requires both architectures and creates a new Release with the signed Mac DMGs, unsigned Windows installer, Linux packages, and SHA-256 checksums. CI's old update manifests/blockmaps are not published; this flow distributes downloads and does not configure the app's automatic updater for the fork.
+
+If several Developer ID certificates are installed, set `SIGNING_IDENTITY` to the exact certificate name or SHA-1 shown by `security find-identity -v -p codesigning`. `NOTARY_KEYCHAIN` optionally selects the Keychain containing the notary profile. Certificate private keys and notary credentials remain on the Mac.
+
 ## Documentation
 
 Visit **[docs.openwhispr.com](https://docs.openwhispr.com)** for:

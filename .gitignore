@@ -54,6 +54,10 @@ typings/
 # Optional REPL history
 .node_repl_history
 
+# Local release tooling
+__pycache__/
+*.py[cod]
+
 # Output of 'npm pack'
 *.tgz
 

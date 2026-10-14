@@ -1,1 +1,3 @@
 openwhispr-mobile/patches/*.patch -whitespace
+scripts/release-local.sh text eol=lf
+scripts/lib/macos-release.py text eol=lf

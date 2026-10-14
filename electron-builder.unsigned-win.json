@@ -5,6 +5,7 @@
   },
   "win": {
     "azureSignOptions": null,
-    "forceCodeSigning": false
+    "forceCodeSigning": false,
+    "signExecutable": false
   }
 }
