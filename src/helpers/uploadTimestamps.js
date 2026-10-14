@@ -40,4 +40,61 @@ function mapVerboseSegments(responseData) {
   return mapped.length ? mapped : null;
 }
 
-module.exports = { timestampRequestFields, mapVerboseSegments };
+// Each request starts its timestamps and speaker identities at zero. Offset
+// timings by the ORIGINAL chunk index (including missing/silent chunks), and
+// keep independently inferred speakers distinct across requests.
+function mergeChunkResponses(results, segmentDuration) {
+  const { formatTimestamp } = require("./speakerMerge");
+  const { i18nMain } = require("./i18nMain");
+  const segments = [];
+  let nextSpeaker = 1;
+  let diarized = false;
+  let plainResponses = false;
+  let completeTimestamps = true;
+  const shifted = results.map((response, index) => {
+    if (!response || typeof response !== "object") return response;
+    const speakers = new Map();
+    const chunkSegments = (Array.isArray(response.segments) ? response.segments : []).map((seg) => {
+      const shiftedSegment = {
+        ...seg,
+        start: seg.start + index * segmentDuration,
+        end: seg.end + index * segmentDuration,
+      };
+      if (response.diarized && seg.speaker) {
+        if (!speakers.has(seg.speaker)) {
+          speakers.set(seg.speaker, i18nMain.t("notes.speaker.label", { n: nextSpeaker++ }));
+        }
+        shiftedSegment.speaker = speakers.get(seg.speaker);
+      }
+      return shiftedSegment;
+    });
+    if (!chunkSegments.length && response.text?.trim()) completeTimestamps = false;
+    segments.push(...chunkSegments);
+    if (!response.diarized || !chunkSegments.length) {
+      plainResponses = true;
+      return response;
+    }
+    diarized = true;
+    return {
+      ...response,
+      text: chunkSegments
+        .map(
+          (seg) =>
+            `[${seg.speaker}] ${formatTimestamp(seg.start)} - ${formatTimestamp(seg.end)}\n${seg.text}`
+        )
+        .join("\n\n"),
+    };
+  });
+  return {
+    results: shifted,
+    diarized,
+    metadata: {
+      // A partial timestamp list would make the Transcript tab and exports
+      // silently omit successfully transcribed chunks. Keep the full note text.
+      ...(completeTimestamps && segments.length ? { segments } : {}),
+      ...(diarized ? { diarized: true, diarizationWarning: plainResponses } : {}),
+    },
+  };
+}
+
+module.exports = { timestampRequestFields, mapVerboseSegments, mergeChunkResponses };

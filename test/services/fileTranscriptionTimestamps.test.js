@@ -38,13 +38,15 @@ test("timestamps opt-in reaches the BYOK IPC call and segments flow back", async
   let receivedOptions = null;
   window.electronAPI.transcribeAudioFileByok = async (options) => {
     receivedOptions = options;
-    return { success: true, text: "Hello.", segments };
+    return { success: true, text: "Hello.", segments, durationSeconds: 720 };
   };
 
   const direct = await transcribeFile("/tmp/audio.webm", byokConfig(), false, {
     timestamps: true,
+    requestId: "upload-1",
   });
   assert.equal(receivedOptions.timestamps, true);
+  assert.equal(receivedOptions.requestId, "upload-1");
   assert.deepEqual(direct.segments, segments);
 
   // Without the opt-in the request stays exactly as before.
@@ -61,4 +63,10 @@ test("timestamps opt-in reaches the BYOK IPC call and segments flow back", async
   assert.equal(receivedOptions.timestamps, true);
   assert.deepEqual(withSpeakers.segments, segments);
   assert.equal(withSpeakers.durationSeconds, 120);
+  const measured = await transcribeFileWithSpeakers("/tmp/audio.webm", byokConfig(), {
+    enabled: false,
+    localModelsReady: false,
+    numSpeakers: null,
+  });
+  assert.equal(measured.durationSeconds, 720);
 });

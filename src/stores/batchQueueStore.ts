@@ -49,11 +49,8 @@ export const useBatchQueueStore = create<BatchQueueStoreState>()(() => ({
   isProcessing: false,
 }));
 
-// Bumping the run id soft-cancels the drain loop; cloud and local uploads
-// additionally get a true backend abort via cancel-upload-transcription
-// (BYOK providers' in-flight IPC still can't be aborted). Either way the
-// orphaned run's late results are discarded on arrival while the UI unlocks
-// immediately.
+// Bumping the run id cancels the drain loop; the request id also aborts the
+// backend upload. Late results from the orphaned run are discarded.
 let runId = 0;
 let activeUploadRequestId: string | null = null;
 
@@ -203,6 +200,10 @@ export function processBatchQueue(
 
       const requestId = crypto.randomUUID();
       activeUploadRequestId = requestId;
+      const cleanupProgress = window.electronAPI.onUploadTranscriptionProgress?.((data) => {
+        if (data.requestId !== requestId || !data.chunksTotal) return;
+        updateItem(item.id, { progress: (data.chunksCompleted / data.chunksTotal) * 90 });
+      });
       const transcriptionResult = await transcribeFileWithSpeakers(
         filePath,
         transcription,
@@ -210,6 +211,7 @@ export function processBatchQueue(
         durationSeconds,
         { requestId, timestamps: true }
       ).finally(() => {
+        cleanupProgress?.();
         if (activeUploadRequestId === requestId) activeUploadRequestId = null;
       });
 

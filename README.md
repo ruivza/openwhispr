@@ -74,6 +74,8 @@ Requires Node.js 24+. See the [full documentation](https://docs.openwhispr.com/q
 
 The commands above run the desktop application, which remains at the repository root. The Expo mobile application lives in [`openwhispr-mobile`](openwhispr-mobile/) with its own dependencies, lockfile, build configuration, and release process. See the [mobile README](openwhispr-mobile/README.md) for its setup instructions.
 
+Desktop audio imports using your own API key automatically split files above the provider's single-request limit (25 MiB, or 14 MiB for Gemini) on your device, transcribe chunks in parallel with the selected provider, and merge the results in order. Custom and self-hosted imports also split above 25 MiB. This does not require an OpenWhispr subscription; your provider's billing and quotas still apply. The shared pipeline uses four-minute MP3 chunks, up to five concurrent chunk requests, retries, cancellation, and explicit warnings for missing audio. Provider timestamps are offset to the original recording; speaker identities inferred independently in different chunks remain separate. OpenWhispr Cloud retains its existing plan limits, and mobile import limits are unchanged.
+
 ## Documentation
 
 Visit **[docs.openwhispr.com](https://docs.openwhispr.com)** for:

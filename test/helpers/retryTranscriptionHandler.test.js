@@ -132,6 +132,8 @@ function buildFakeThis() {
     [8, { id: 8, audio_duration_ms: 1200 }],
   ]);
   const target = {
+    _uploadCancelRegistry:
+      require("../../src/helpers/uploadCancelRegistry").createUploadCancelRegistry(),
     sessionId: "test-session",
     audioStorageManager: {
       // 7 is a stored WebM recording, 8 one already in WAV.
@@ -778,4 +780,262 @@ test("upload: an HTTP failure logs its status and a redacted body", async (t) =>
   assert.equal(failure.meta.status, 401);
   assert.match(failure.meta.body, /Incorrect API key provided/);
   assert.equal(failure.meta.body.includes("sk-proj-leakedKey12345"), false);
+});
+
+function chunkedUploadFixture(t, sizeBytes, count = 3) {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const os = require("node:os");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ow-large-upload-test-"));
+  const filePath = path.join(dir, "large.mp3");
+  const fd = fs.openSync(filePath, "w");
+  fs.ftruncateSync(fd, sizeBytes);
+  fs.closeSync(fd);
+  const chunkDirs = [];
+  t.mock.method(
+    require("../../src/helpers/ffmpegUtils"),
+    "splitAudioFile",
+    async (input, output, options) => {
+      assert.equal(input, filePath);
+      assert.equal(options.segmentDuration, 240);
+      options.signal.throwIfAborted();
+      chunkDirs.push(output);
+      return {
+        durationSeconds: count * 240,
+        chunkPaths: Array.from({ length: count }, (_, index) => {
+          const chunk = path.join(output, `chunk-${index}.mp3`);
+          fs.writeFileSync(chunk, `part-${index}`);
+          return chunk;
+        }),
+      };
+    }
+  );
+  const originalRead = fs.readFileSync;
+  t.mock.method(fs, "readFileSync", function (file, ...args) {
+    assert.notEqual(file, filePath, "large source must never be buffered whole");
+    return originalRead.call(this, file, ...args);
+  });
+  const previousResponse = fetchResponse;
+  t.after(() => {
+    fetchResponse = previousResponse;
+    assert.equal(fakeThis._uploadCancelRegistry.cancel("large-upload"), 0, "controller released");
+    assert.ok(fs.existsSync(filePath), "source preserved");
+    for (const chunkDir of chunkDirs) assert.equal(fs.existsSync(chunkDir), false);
+    // This directory was created by this fixture, under the system temp dir.
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  fetches.length = 0;
+  cortiCalls.length = 0;
+  tinfoilCalls.length = 0;
+  const progress = [];
+  return {
+    filePath,
+    progress,
+    invoke: (options) =>
+      handlers.get("transcribe-audio-file-byok")(
+        { sender: { send: (channel, payload) => progress.push({ channel, ...payload }) } },
+        {
+          filePath,
+          requestId: "large-upload",
+          apiKey: "provider-key",
+          model: "whisper-1",
+          transcriptionMode: "providers",
+          ...options,
+        }
+      ),
+  };
+}
+
+test("large BYOK and Custom uploads use the shared splitter and retain provider routing/auth", async (t) => {
+  for (const provider of [
+    "openai",
+    "groq",
+    "mistral",
+    "xai",
+    "custom",
+    "gemini",
+    "corti",
+    "tinfoil",
+  ]) {
+    await t.test(provider, async (t) => {
+      const cap = provider === "gemini" ? 14 : 25;
+      const fixture = chunkedUploadFixture(t, cap * 1024 * 1024 + 1);
+      fetchResponse = (_, init) => {
+        const index =
+          provider === "gemini"
+            ? Buffer.from(JSON.parse(init.body).input[0].data, "base64").toString().slice(-1)
+            : init.body.toString().match(/part-(\d)/)[1];
+        const data =
+          provider === "gemini"
+            ? { status: "completed", output_text: `text ${index}` }
+            : { text: `text ${index}`, segments: [{ text: `text ${index}`, start: 1, end: 2 }] };
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify(data),
+          json: async () => data,
+        };
+      };
+      const result = await fixture.invoke({
+        provider,
+        baseUrl: "https://stt.example.com/v1",
+        model: provider === "gemini" ? "gemini-3.5-transcribe" : "whisper-1",
+        timestamps: true,
+      });
+      assert.equal(result.success, true, result.error);
+      assert.equal(result.durationSeconds, 720);
+      assert.equal(fixture.progress.at(-1).chunksCompleted, 3);
+      assert.ok(fixture.progress.every((p) => p.requestId === "large-upload"));
+      if (provider === "tinfoil") {
+        assert.equal(tinfoilCalls.length, 3);
+        assert.ok(
+          tinfoilCalls.every(
+            (call) => call.apiKey === "tk-tinfoil" && call.signal instanceof AbortSignal
+          )
+        );
+      } else if (provider === "corti") {
+        assert.equal(cortiCalls.length, 3);
+        assert.ok(
+          cortiCalls.every(
+            (call) => call.clientId === "corti-id" && call.signal instanceof AbortSignal
+          )
+        );
+      } else {
+        assert.equal(fetches.length, 3);
+        assert.equal(result.text, "text 0 text 1 text 2");
+        const expectedHost = {
+          openai: "api.openai.com",
+          groq: "api.groq.com",
+          mistral: "api.mistral.ai",
+          xai: "api.x.ai",
+          custom: "stt.example.com",
+          gemini: "generativelanguage.googleapis.com",
+        }[provider];
+        for (const request of fetches) {
+          assert.equal(new URL(request.url).hostname, expectedHost);
+          assert.ok(request.init.signal instanceof AbortSignal);
+          const header =
+            provider === "mistral"
+              ? "x-api-key"
+              : provider === "gemini"
+                ? "x-goog-api-key"
+                : "Authorization";
+          assert.equal(
+            request.init.headers[header],
+            header === "Authorization" ? "Bearer provider-key" : "provider-key"
+          );
+        }
+        if (["openai", "groq", "mistral"].includes(provider)) {
+          assert.deepEqual(
+            result.segments.map((s) => s.start),
+            [1, 241, 481]
+          );
+        }
+      }
+    });
+  }
+});
+
+test("large BYOK uploads can be cancelled through the existing IPC channel", async (t) => {
+  const fixture = chunkedUploadFixture(t, 26 * 1024 * 1024, 8);
+  const started = Promise.withResolvers();
+  fetchResponse = (_, init) => {
+    started.resolve();
+    return new Promise((resolve, reject) => {
+      const abort = () => reject(init.signal.reason);
+      if (init.signal.aborted) abort();
+      else init.signal.addEventListener("abort", abort, { once: true });
+    });
+  };
+  const pending = fixture.invoke({ provider: "openai" });
+  await started.promise;
+  assert.deepEqual(await handlers.get("cancel-upload-transcription")({}, "large-upload"), {
+    success: true,
+  });
+  const result = await pending;
+  assert.equal(result.code, "UPLOAD_CANCELLED");
+  assert.equal(result.success, false);
+  assert.ok(fetches.length <= 5);
+});
+
+test("large BYOK uploads preserve authentication errors instead of replacing them with a chunk-loss error", async (t) => {
+  const fixture = chunkedUploadFixture(t, 26 * 1024 * 1024, 8);
+  fetchResponse = () => ({
+    status: 401,
+    text: async () => JSON.stringify({ error: "unauthorized" }),
+  });
+  const result = await fixture.invoke({ provider: "openai" });
+  assert.equal(result.code, "PROVIDER_AUTH_FAILED");
+  assert.ok(fetches.length <= 5);
+});
+
+test("cloud imports still use the same chunk pipeline, cloud endpoint and isolated session", async (t) => {
+  const fixture = chunkedUploadFixture(t, 5 * 1024 * 1024);
+  const previousApiUrl = process.env.OPENWHISPR_API_URL;
+  process.env.OPENWHISPR_API_URL = "https://api.openwhispr.example";
+  t.after(() => {
+    if (previousApiUrl === undefined) delete process.env.OPENWHISPR_API_URL;
+    else process.env.OPENWHISPR_API_URL = previousApiUrl;
+  });
+  t.mock.method(require("../../src/helpers/tokenStore"), "get", () => "cloud-token");
+  const partitions = [];
+  t.mock.method(electronStub.session, "fromPartition", (partition) => {
+    partitions.push(partition);
+    return {
+      fetch: electronStub.net.fetch,
+      webRequest: { onBeforeSendHeaders() {} },
+      async closeAllConnections() {},
+    };
+  });
+  fetchResponse = (_, init) => {
+    const index = init.body.toString().match(/part-(\d)/)[1];
+    return { status: 200, text: async () => JSON.stringify({ text: `cloud ${index}` }) };
+  };
+  const result = await handlers.get("transcribe-audio-file-cloud")(
+    { sender: { send: (_, payload) => fixture.progress.push(payload) } },
+    fixture.filePath,
+    { requestId: "large-upload" }
+  );
+  assert.equal(result.success, true, result.error);
+  assert.equal(result.text, "cloud 0 cloud 1 cloud 2");
+  assert.deepEqual(partitions, ["ow-cloud-chunk-uploads"]);
+  assert.equal(fetches.length, 3);
+  for (const { url, init } of fetches) {
+    assert.equal(url, "https://api.openwhispr.example/api/transcribe");
+    assert.equal(init.headers.Authorization, "Bearer cloud-token");
+    assert.match(init.body.toString(), /file_upload/);
+  }
+  assert.equal(fixture.progress.at(-1).requestId, "large-upload");
+});
+
+test("large Custom Azure imports retain deployment URLs and api-key authentication", async (t) => {
+  const fixture = chunkedUploadFixture(t, 26 * 1024 * 1024);
+  const result = await fixture.invoke({
+    provider: "custom",
+    baseUrl: "https://tenant.openai.azure.com",
+    model: "my-whisper-deployment",
+  });
+  assert.equal(result.success, true, result.error);
+  assert.equal(fetches.length, 3);
+  for (const { url, init } of fetches) {
+    assert.match(
+      url,
+      /tenant\.openai\.azure\.com\/openai\/deployments\/my-whisper-deployment\/audio\/transcriptions/
+    );
+    assert.equal(init.headers["api-key"], "provider-key");
+    assert.equal(init.headers.Authorization, undefined);
+  }
+});
+
+test("large self-hosted imports never fall through to a stale BYOK provider", async (t) => {
+  const fixture = chunkedUploadFixture(t, 26 * 1024 * 1024);
+  const result = await fixture.invoke({
+    provider: "gemini",
+    transcriptionMode: "self-hosted",
+    remoteTranscriptionUrl: "http://127.0.0.1:8080/v1",
+    remoteTranscriptionModel: "local-whisper",
+  });
+  assert.equal(result.success, true, result.error);
+  assert.equal(fetches.length, 3);
+  assert.ok(fetches.every(({ url }) => url === "http://127.0.0.1:8080/v1/audio/transcriptions"));
 });

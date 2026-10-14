@@ -2732,12 +2732,18 @@ declare global {
       cancelUploadTranscription?: (requestId: string) => Promise<{ success: boolean }>;
 
       onUploadTranscriptionProgress?: (
-        callback: (data: { stage: string; chunksTotal: number; chunksCompleted: number }) => void
+        callback: (data: {
+          stage: string;
+          chunksTotal: number;
+          chunksCompleted: number;
+          requestId?: string;
+        }) => void
       ) => () => void;
 
       // BYOK audio file transcription
       transcribeAudioFileByok?: (options: {
         filePath: string;
+        requestId?: string;
         apiKey: string;
         baseUrl: string;
         model: string;
@@ -2761,6 +2767,12 @@ declare global {
         text?: string;
         error?: string;
         diarized?: boolean;
+        code?: string;
+        warning?: string;
+        failedChunks?: number;
+        totalChunks?: number;
+        durationSeconds?: number | null;
+        diarizationWarning?: boolean;
         segments?: Array<{ text: string; start: number; end: number; speaker?: string }>;
       }>;
 

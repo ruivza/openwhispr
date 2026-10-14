@@ -392,6 +392,8 @@ export function resolveTranscriptionRoute({
         scheme: isAzureOpenAIEndpoint(base) ? "azure-api-key" : "bearer",
         keyRef: "custom",
       },
+      // This caps each request. File imports split larger inputs, while the
+      // dictation/retry lanes retain their existing single-request behavior.
       sizeCapBytes: BYOK_FILE_SIZE_LIMIT,
       language,
     };

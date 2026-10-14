@@ -142,7 +142,7 @@ function runFFmpegConversion(args, outputPath, { signal } = {}) {
       } catch {
         // an uncaught throw here would escape the abort dispatch
       }
-      reject(createAbortError());
+      // Wait for close before callers remove the partially written output.
     };
     signal?.addEventListener("abort", onAbort, { once: true });
 
@@ -152,13 +152,19 @@ function runFFmpegConversion(args, outputPath, { signal } = {}) {
 
     proc.on("error", (error) => {
       signal?.removeEventListener("abort", onAbort);
-      if (signal?.aborted) return;
+      if (signal?.aborted) {
+        reject(createAbortError());
+        return;
+      }
       reject(new Error(`FFmpeg process error: ${error.message}`));
     });
 
     proc.on("close", (code) => {
       signal?.removeEventListener("abort", onAbort);
-      if (signal?.aborted) return;
+      if (signal?.aborted) {
+        reject(createAbortError());
+        return;
+      }
       if (code !== 0) {
         const stderrPreview = stderr.slice(-500).trim();
         debugLogger.debug("FFmpeg conversion failed", { code, stderr: stderrPreview });
@@ -392,6 +398,7 @@ function splitAudioFile(inputPath, outputDir, options = {}) {
       "16000",
       "-ac",
       "1",
+      "-vn",
       "-y",
       outputPattern,
     ];
@@ -416,7 +423,7 @@ function splitAudioFile(inputPath, outputDir, options = {}) {
       } catch {
         // an uncaught throw here would escape the abort dispatch
       }
-      reject(createAbortError());
+      // Wait for close before cleanup; Windows cannot remove open chunk files.
     };
     signal?.addEventListener("abort", onAbort, { once: true });
 
@@ -426,15 +433,20 @@ function splitAudioFile(inputPath, outputDir, options = {}) {
 
     proc.on("error", (error) => {
       signal?.removeEventListener("abort", onAbort);
-      if (signal?.aborted) return;
+      if (signal?.aborted) {
+        reject(createAbortError());
+        return;
+      }
       reject(new Error(`FFmpeg split error: ${error.message}`));
     });
 
-    // The kill lands here as a non-zero exit; returning early keeps a cancel
-    // from being logged and reported as an ffmpeg failure.
+    // A cancelled process is fully stopped before cleanup begins.
     proc.on("close", (code) => {
       signal?.removeEventListener("abort", onAbort);
-      if (signal?.aborted) return;
+      if (signal?.aborted) {
+        reject(createAbortError());
+        return;
+      }
       if (code !== 0) {
         const stderrPreview = stderr.slice(-500).trim();
         debugLogger.debug("FFmpeg split failed", { code, stderr: stderrPreview });
@@ -449,7 +461,7 @@ function splitAudioFile(inputPath, outputDir, options = {}) {
       const chunks = fs
         .readdirSync(outputDir)
         .filter((f) => f.startsWith("chunk-") && f.endsWith(".mp3"))
-        .sort()
+        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
         .map((f) => path.join(outputDir, f));
 
       if (chunks.length === 0) {

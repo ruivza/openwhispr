@@ -21,7 +21,7 @@ export interface FileTranscriptionResult {
   // The transcript succeeded, but requested speaker labels could not be applied.
   diarizationWarning?: boolean;
   warning?: string;
-  // Set alongside `warning` by the chunked cloud path: how much audio was lost.
+  // Set alongside `warning` by chunked uploads: how much audio was lost.
   failedChunks?: number;
   totalChunks?: number;
   // Measured duration of the source audio, for persisting as
@@ -183,6 +183,7 @@ export async function transcribeFile(
   // (fail-closed on misconfiguration) instead of stale BYOK settings.
   return window.electronAPI.transcribeAudioFileByok!({
     filePath,
+    requestId: opts.requestId,
     managed: managed?.kind === "managed" ? managed : undefined,
     apiKey: cfg.getApiKey(),
     baseUrl: cfg.cloudTranscriptionBaseUrl,
@@ -271,7 +272,11 @@ export async function transcribeFileWithSpeakers(
 
   // The diarizer measures the converted audio, so it covers picked files whose
   // duration the caller never knew. 0/NaN mean "unknown", hence ||.
-  const measuredDuration = durationSeconds || (diar?.success && diar.durationSeconds) || null;
+  const measuredDuration =
+    durationSeconds ||
+    transcribed.durationSeconds ||
+    (diar?.success && diar.durationSeconds) ||
+    null;
   const result = { ...transcribed, durationSeconds: measuredDuration };
 
   if (!result.success || !result.text || !diarization.enabled || result.diarized) return result;

@@ -1,12 +1,9 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const { loadWithMockLogger } = require("./harness/mockDebugLogger");
 
-const {
-  parseFfmpegDuration,
-  parseWavFormat,
-  isPcm16Mono16kWav,
-  wavToFloat32Samples,
-} = require("../../src/helpers/ffmpegUtils");
+const { parseFfmpegDuration, parseWavFormat, isPcm16Mono16kWav, wavToFloat32Samples } =
+  loadWithMockLogger(require.resolve("../../src/helpers/ffmpegUtils"));
 const { wavHeader, pcm16Mono16kWav, insertWavChunk } = require("./harness/wavFixtures");
 
 test("parseFfmpegDuration reads the input duration from ffmpeg output", () => {

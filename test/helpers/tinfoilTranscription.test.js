@@ -49,7 +49,9 @@ test("posts to the attested transcriptions path with the registry's batch model"
     return okResponse("hello world");
   });
 
-  const result = await transcribeWithTinfoil({ ...AUDIO, language: "en" });
+  const { signal } = new AbortController();
+  const result = await transcribeWithTinfoil({ ...AUDIO, language: "en", signal });
+  assert.equal(calls[0].init.signal, signal);
 
   assert.equal(result.text, "hello world");
   assert.equal(result.model, "voxtral-small-24b");

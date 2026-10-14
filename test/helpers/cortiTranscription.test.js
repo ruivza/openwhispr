@@ -42,3 +42,29 @@ test("a rejected Corti client secret is classified instead of showing the token 
   assert.equal(error.technicalDetails.status, 401);
   assert.match(error.technicalDetails.underlyingError, /Invalid client credentials/);
 });
+
+test("cancelling while Corti authenticates aborts auth and never uploads audio", async () => {
+  const controller = new AbortController();
+  const started = Promise.withResolvers();
+  const requests = [];
+  fetchBehavior = (url, init) => {
+    requests.push(url);
+    started.resolve();
+    return new Promise((resolve, reject) => {
+      init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
+    });
+  };
+  const pending = transcribeAudio({
+    environment: "eu",
+    tenant: "acme",
+    clientId: "cancel-id",
+    clientSecret: "cancel-secret",
+    audioBuffer: Buffer.from("audio"),
+    signal: controller.signal,
+  });
+  await started.promise;
+  controller.abort();
+  await assert.rejects(pending, { name: "AbortError" });
+  assert.equal(requests.length, 1);
+  assert.match(requests[0], /openid-connect\/token$/);
+});

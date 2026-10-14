@@ -4,12 +4,12 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
+const { setTimeout: delay } = require("node:timers/promises");
+const { loadWithMockLogger } = require("./harness/mockDebugLogger");
 
-const {
-  AUDIO_MIME_TYPES,
-  providerContentType,
-  prepareProviderUpload,
-} = require("../../src/helpers/providerUploadAudio");
+const { AUDIO_MIME_TYPES, providerContentType, prepareProviderUpload } = loadWithMockLogger(
+  require.resolve("../../src/helpers/providerUploadAudio")
+);
 const { convertToWav, getFFmpegPath } = require("../../src/helpers/ffmpegUtils");
 const { UPLOAD_AUDIO_EXTENSIONS } = require("../../src/constants/uploadAudioFormats.json");
 
@@ -170,5 +170,50 @@ test(
     await assert.rejects(prepareProviderUpload(source, { signal: controller.signal }), {
       name: "AbortError",
     });
+  }
+);
+
+test(
+  "cancelling an active transcode removes its partial MP3 after FFmpeg exits",
+  { skip: withoutFfmpeg },
+  async (t) => {
+    const dir = makeTempDir(t);
+    const source = path.join(dir, "long.aiff");
+    execFileSync(
+      ffmpegPath,
+      [
+        "-loglevel",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        "sine=duration=600",
+        "-ar",
+        "16000",
+        "-ac",
+        "1",
+        source,
+      ],
+      { windowsHide: true }
+    );
+    // Make this job's generated path observable without touching another job's files.
+    const crypto = require("node:crypto");
+    const suffix = `cancel-${process.pid}`;
+    t.mock.method(crypto, "randomBytes", () => ({ toString: () => suffix }));
+    const tempDir = require("../../src/helpers/safeTempDir").getSafeTempDir();
+    const controller = new AbortController();
+    const pending = prepareProviderUpload(source, { signal: controller.signal });
+    const rejected = assert.rejects(pending, { name: "AbortError" });
+    let output;
+    for (let i = 0; i < 200; i++) {
+      output = fs.readdirSync(tempDir).find((name) => name.endsWith(`-${suffix}.mp3`));
+      if (output) break;
+      await delay(5);
+    }
+    controller.abort();
+    await rejected;
+    assert.ok(output, "cancel after FFmpeg has created a partial MP3");
+    assert.equal(fs.existsSync(path.join(tempDir, output)), false);
+    assert.ok(fs.existsSync(source), "user source survives cancellation");
   }
 );

@@ -20,7 +20,8 @@ function assertValidTarget(environment, tenant) {
   }
 }
 
-async function getCortiToken({ environment, tenant, clientId, clientSecret }, fetchImpl) {
+async function getCortiToken({ environment, tenant, clientId, clientSecret, signal }, fetchImpl) {
+  signal?.throwIfAborted();
   assertValidTarget(environment, tenant);
 
   // The secret is part of the key (digested, never stored raw) so edited
@@ -51,7 +52,7 @@ async function getCortiToken({ environment, tenant, clientId, clientSecret }, fe
           client_secret: clientSecret,
           scope: "openid",
         }).toString(),
-        signal: controller.signal,
+        signal: signal ? AbortSignal.any([controller.signal, signal]) : controller.signal,
       }
     );
 

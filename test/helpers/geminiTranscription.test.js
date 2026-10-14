@@ -1,6 +1,9 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { transcribeWithGemini } = require("../../src/helpers/geminiTranscription");
+const { loadWithMockLogger } = require("./harness/mockDebugLogger");
+const { transcribeWithGemini } = loadWithMockLogger(
+  require.resolve("../../src/helpers/geminiTranscription")
+);
 
 const AUDIO = Buffer.from("fake-audio-bytes");
 
@@ -24,11 +27,19 @@ function requestBody(calls) {
 
 test("posts JSON with the key header to the Interactions endpoint", async () => {
   const { fetchImpl, calls } = makeFetch({ status: "completed", output_text: "hello" });
+  const { signal } = new AbortController();
 
   const result = await transcribeWithGemini(
-    { audioBuffer: AUDIO, model: "gemini-3.5-transcribe", contentType: "audio/mp3", apiKey: "k1" },
+    {
+      audioBuffer: AUDIO,
+      model: "gemini-3.5-transcribe",
+      contentType: "audio/mp3",
+      apiKey: "k1",
+      signal,
+    },
     fetchImpl
   );
+  assert.equal(calls[0].init.signal, signal);
 
   assert.equal(calls[0].url, "https://generativelanguage.googleapis.com/v1beta/interactions");
   assert.equal(calls[0].init.method, "POST");
@@ -180,7 +191,7 @@ test("any non-completed status rejects instead of returning empty text", async (
 });
 
 test("an HTTP failure logs its status and a redacted body", async (t) => {
-  const debugLogger = require("../../src/helpers/debugLogger");
+  const { mockLogger: debugLogger } = require("./harness/mockDebugLogger");
   const warnings = [];
   t.mock.method(debugLogger, "warn", (message, meta) => warnings.push({ message, meta }));
   const fetchImpl = async () => ({

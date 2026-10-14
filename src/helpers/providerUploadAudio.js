@@ -37,7 +37,17 @@ async function prepareProviderUpload(sourcePath, { signal } = {}) {
     getSafeTempDir(),
     `ow-upload-${Date.now()}-${crypto.randomBytes(4).toString("hex")}.mp3`
   );
-  await convertToMp3(sourcePath, mp3Path, { signal });
+  try {
+    await convertToMp3(sourcePath, mp3Path, { signal });
+  } catch (error) {
+    // No cleanup handle is returned on failure/cancellation.
+    try {
+      fs.rmSync(mp3Path, { force: true });
+    } catch {
+      // Preserve the conversion error.
+    }
+    throw error;
+  }
   return {
     path: mp3Path,
     cleanup() {
