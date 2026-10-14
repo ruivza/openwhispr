@@ -78,7 +78,7 @@ Desktop audio imports using your own API key automatically split files above the
 
 ## GitHub builds and local macOS signing
 
-This fork's desktop workflows build without publisher certificates. Pushes to `main`/`develop`, pull requests, and manual runs keep the existing quality checks. Version tags and the tagged-build workflow use the same unsigned build pipeline; neither workflow publishes a GitHub Release.
+This fork's desktop workflows build without publisher certificates. Pushes to `main`/`develop`, pull requests, and manual runs keep the existing quality checks. Version tags and the tagged-build workflow use the same unsigned build pipeline. After a successful tag-push build, **Publish Windows and Linux packages** publishes those installers to the version Release. Signed Mac DMGs are added locally after notarization.
 
 Download the artifacts from the completed GitHub Actions run (retained for 7 days):
 
