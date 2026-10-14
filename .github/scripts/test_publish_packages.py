@@ -52,6 +52,25 @@ class PublishingTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     publisher.upload_packages("ruivza/openwhispr", "v1.10.4", [package])
 
+    def test_normalizes_asset_names_before_checksums(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            package = root / "OpenWhispr Setup 1.10.4.exe"
+            package.write_bytes(b"installer")
+            staged = publisher.stage_packages([package], root / "staged")
+            self.assertEqual(staged[0].name, "OpenWhispr.Setup.1.10.4.exe")
+            self.assertEqual(publisher.sha256(staged[0]), publisher.sha256(package))
+
+    def test_can_refresh_only_its_own_generated_checksum_manifest(self):
+        with tempfile.TemporaryDirectory() as temp:
+            manifest = Path(temp) / "SHA256SUMS-windows-linux"
+            manifest.write_text("updated checksums")
+            existing = {"assets": [{"name": manifest.name, "digest": "sha256:old"}]}
+            with patch.object(publisher, "release_info", return_value=existing), patch.object(publisher, "gh") as gh:
+                publisher.upload_packages("ruivza/openwhispr", "v1.10.4", [manifest])
+                gh.assert_called_once_with("release", "upload", "v1.10.4", str(manifest),
+                                           "--repo", "ruivza/openwhispr", "--clobber")
+
     def test_adds_package_to_existing_release_without_overwrite(self):
         with tempfile.TemporaryDirectory() as temp:
             package = Path(temp) / "package.exe"

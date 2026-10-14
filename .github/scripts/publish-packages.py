@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
 
@@ -54,6 +55,20 @@ def sha256(path):
     return digest.hexdigest()
 
 
+def stage_packages(packages, destination):
+    destination.mkdir()
+    staged = []
+    for package in packages:
+        # GitHub converts spaces in uploaded asset names to dots. Normalize
+        # before generating the checksum manifest and checking existing assets.
+        target = destination / package.name.replace(" ", ".")
+        if target.exists():
+            raise ValueError("Duplicate normalized asset name: " + target.name)
+        shutil.copyfile(package, target)
+        staged.append(target)
+    return staged
+
+
 def release_info(repository, tag):
     try:
         return api(f"repos/{repository}/releases/tags/{tag}")
@@ -85,6 +100,11 @@ def upload_packages(repository, tag, packages):
                        "--pattern", package.name, "--dir", temp)
                     digest = "sha256:" + sha256(Path(temp) / package.name)
             if digest != expected:
+                if package.name == "SHA256SUMS-windows-linux":
+                    # This publisher owns this generated manifest. Installer
+                    # contents have already been checked and are never replaced.
+                    gh("release", "upload", tag, str(package), "--repo", repository, "--clobber")
+                    continue
                 raise ValueError("Existing asset has different contents: " + package.name)
             print("Already published: " + package.name, flush=True)
             continue
@@ -109,7 +129,7 @@ def main():
             print("Downloading " + artifact + " on the GitHub runner...", flush=True)
             gh("run", "download", run_id, "--repo", repository,
                "--name", artifact, "--dir", str(root / platform))
-        packages = select_packages(root, tag[1:])
+        packages = stage_packages(select_packages(root, tag[1:]), root / "packages")
         checksums = root / "SHA256SUMS-windows-linux"
         checksums.write_text("".join(sha256(p) + "  " + p.name + "\n" for p in packages))
         if api(f"repos/{repository}/commits/{tag}")["sha"] != commit:
