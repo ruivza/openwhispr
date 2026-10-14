@@ -12,8 +12,8 @@ Usage: bash scripts/release-local.sh --run RUN_ID [--repo OWNER/REPO] [--arch al
 
 Download a successful tagged build and sign/notarize macOS packages locally.
 Default: sign both Mac architectures and keep the DMGs under build/.
---publish creates a new Release containing both signed Mac DMGs, the unsigned
-Windows installer, Linux packages, and checksums. Existing releases are not replaced.
+--publish creates a new Release containing both signed Mac DMGs and checksums.
+Windows and Linux artifacts are not downloaded. Existing releases are not replaced.
 --arch selects one Mac architecture for local testing; publishing requires all.
 
 Required: NOTARY_PROFILE, a notarytool profile in this Mac's Keychain.
@@ -58,8 +58,11 @@ VERSION=$(python3 -c 'import json; print(json.load(open("package.json"))["versio
 TAG="v$VERSION"
 COMMIT=$(git rev-parse "refs/tags/$TAG^{commit}")
 [[ "$(git rev-parse HEAD)" = "$COMMIT" ]] || { echo "Error: check out $TAG before signing." >&2; exit 1; }
-git diff --quiet "$COMMIT" -- scripts package.json resources/mac .github/workflows || {
-    echo "Error: release scripts, entitlements, and workflow must match $TAG." >&2; exit 1;
+# The launcher may receive download/publishing fixes after a tagged build.
+# Keep the signing helper, entitlements, and all other build inputs at that tag.
+git diff --quiet "$COMMIT" -- scripts package.json resources/mac .github/workflows \
+    ':(exclude)scripts/release-local.sh' || {
+    echo "Error: signing helpers, entitlements, and workflow must match $TAG." >&2; exit 1;
 }
 gh auth status --hostname github.com >/dev/null
 [[ "$(gh api "repos/$REPOSITORY/commits/$TAG" --jq .sha)" = "$COMMIT" ]] || {
@@ -87,6 +90,7 @@ WORK_DIR=$(mktemp -d "$PROJECT_DIR/build/local-release.XXXXXX")
 # Keep failed runs and notarization logs for diagnosis; never replace an old build.
 echo "Release workspace: $WORK_DIR"
 mkdir "$WORK_DIR/output"
+echo "Checking GitHub build $RUN_ID for $TAG..."
 gh run view "$RUN_ID" --repo "$REPOSITORY" \
     --json headSha,headBranch,status,conclusion,event,workflowName > "$WORK_DIR/run.json"
 python3 "$SCRIPT_DIR/lib/macos-release.py" validate-run "$WORK_DIR/run.json" "$COMMIT" "$TAG"
@@ -94,6 +98,7 @@ python3 "$SCRIPT_DIR/lib/macos-release.py" validate-run "$WORK_DIR/run.json" "$C
 notarize() {
     local file="$1"
     local result="$2"
+    echo "Submitting $(basename "$file") to Apple; waiting for notarization..."
     xcrun notarytool submit "$file" "${AUTH_ARGS[@]}" --wait --output-format json > "$result"
     python3 - "$result" <<'PY'
 import json, sys
@@ -105,8 +110,10 @@ PY
 
 if [ "$ARCH" = all ]; then ARCHS=(arm64 x64); else ARCHS=("$ARCH"); fi
 for arch in "${ARCHS[@]}"; do
+    echo "[$arch] Downloading macOS build from GitHub (this may take several minutes)..."
     gh run download "$RUN_ID" --repo "$REPOSITORY" \
         --name "macos-$arch-unsigned-build" --dir "$WORK_DIR/download-$arch"
+    echo "[$arch] Download complete. Validating and extracting app..."
     python3 "$SCRIPT_DIR/lib/macos-release.py" extract \
         "$WORK_DIR/download-$arch/OpenWhispr-macos-$arch-unsigned-app.tar.gz" \
         "$WORK_DIR/extracted-$arch" "$VERSION" "$COMMIT" "$arch"
@@ -116,6 +123,7 @@ for arch in "${ARCHS[@]}"; do
     [[ "$(lipo -archs "$APP/Contents/MacOS/OpenWhispr")" = "$EXPECTED_ARCH" ]] || {
         echo "Error: app binary architecture does not match $arch." >&2; exit 1;
     }
+    echo "[$arch] Signing app and nested binaries..."
     python3 "$SCRIPT_DIR/lib/macos-release.py" sign "$APP" --identity "$SIGNING_IDENTITY" --version "$VERSION"
 
     # Notarize/staple the app before packaging, then notarize/staple the DMG.
@@ -141,26 +149,6 @@ for arch in "${ARCHS[@]}"; do
     spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG"
 done
 
-if [ "$PUBLISH" = true ]; then
-    gh run download "$RUN_ID" --repo "$REPOSITORY" --name windows-unsigned-build --dir "$WORK_DIR/windows"
-    gh run download "$RUN_ID" --repo "$REPOSITORY" --name linux-build --dir "$WORK_DIR/linux"
-    # Installer/package files only: never upload unpacked apps or the CI update
-    # manifests/blockmaps, whose checksums no longer describe locally signed files.
-    python3 - "$WORK_DIR" <<'PY'
-import shutil, sys
-from pathlib import Path
-root = Path(sys.argv[1])
-for platform, suffixes in (("windows", (".exe",)), ("linux", (".AppImage", ".deb", ".rpm", ".tar.gz"))):
-    packages = [p for p in (root / platform).iterdir() if p.is_file() and p.name.endswith(suffixes)]
-    if not packages:
-        raise SystemExit("Missing " + platform + " packages")
-    for package in packages:
-        destination = root / "output" / package.name
-        if destination.exists():
-            raise SystemExit("Duplicate release asset: " + package.name)
-        shutil.copy2(package, destination)
-PY
-fi
 (cd "$WORK_DIR/output" && shasum -a 256 ./*) > "$WORK_DIR/SHA256SUMS"
 mv "$WORK_DIR/SHA256SUMS" "$WORK_DIR/output/SHA256SUMS"
 
@@ -168,6 +156,7 @@ if [ "$PUBLISH" = true ]; then
     [[ "$(gh api "repos/$REPOSITORY/commits/$TAG" --jq .sha)" = "$COMMIT" ]] || {
         echo "Error: remote tag changed during notarization." >&2; exit 1;
     }
+    echo "Publishing signed macOS DMGs and checksums to $REPOSITORY ($TAG)..."
     gh release create "$TAG" "$WORK_DIR/output/"* --repo "$REPOSITORY" \
         --verify-tag --title "OpenWhispr $VERSION" --generate-notes
 else
