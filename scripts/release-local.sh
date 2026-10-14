@@ -12,8 +12,8 @@ Usage: bash scripts/release-local.sh --run RUN_ID [--repo OWNER/REPO] [--arch al
 
 Download a successful tagged build and sign/notarize macOS packages locally.
 Default: sign both Mac architectures and keep the DMGs under build/.
---publish creates a new Release containing both signed Mac DMGs and checksums.
-Windows and Linux artifacts are not downloaded. Existing releases are not replaced.
+--publish adds signed Mac DMGs and checksums to the version Release.
+GitHub publishes Windows/Linux packages separately. Existing assets are not replaced.
 --arch selects one Mac architecture for local testing; publishing requires all.
 
 Required: NOTARY_PROFILE, a notarytool profile in this Mac's Keychain.
@@ -68,10 +68,6 @@ gh auth status --hostname github.com >/dev/null
 [[ "$(gh api "repos/$REPOSITORY/commits/$TAG" --jq .sha)" = "$COMMIT" ]] || {
     echo "Error: local and remote tags differ." >&2; exit 1;
 }
-if [ "$PUBLISH" = true ] && gh release view "$TAG" --repo "$REPOSITORY" >/dev/null 2>&1; then
-    echo "Error: Release $TAG already exists; it will not be overwritten." >&2
-    exit 1
-fi
 
 SIGNING_IDENTITY=$(security find-identity -v -p codesigning | python3 -c '
 import re, sys
@@ -149,17 +145,22 @@ for arch in "${ARCHS[@]}"; do
     spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG"
 done
 
-(cd "$WORK_DIR/output" && shasum -a 256 ./*) > "$WORK_DIR/SHA256SUMS"
-mv "$WORK_DIR/SHA256SUMS" "$WORK_DIR/output/SHA256SUMS"
+(cd "$WORK_DIR/output" && shasum -a 256 ./*) > "$WORK_DIR/SHA256SUMS-macos"
+mv "$WORK_DIR/SHA256SUMS-macos" "$WORK_DIR/output/SHA256SUMS-macos"
 
 if [ "$PUBLISH" = true ]; then
     [[ "$(gh api "repos/$REPOSITORY/commits/$TAG" --jq .sha)" = "$COMMIT" ]] || {
         echo "Error: remote tag changed during notarization." >&2; exit 1;
     }
     echo "Publishing signed macOS DMGs and checksums to $REPOSITORY ($TAG)..."
-    gh release create "$TAG" "$WORK_DIR/output/"* --repo "$REPOSITORY" \
-        --verify-tag --title "OpenWhispr $VERSION" --generate-notes
+    if ! gh release view "$TAG" --repo "$REPOSITORY" >/dev/null 2>&1; then
+        # The CI publisher may create the Release concurrently.
+        gh release create "$TAG" --repo "$REPOSITORY" --verify-tag \
+            --title "OpenWhispr $VERSION" --generate-notes || \
+            gh release view "$TAG" --repo "$REPOSITORY" >/dev/null
+    fi
+    gh release upload "$TAG" "$WORK_DIR/output/"* --repo "$REPOSITORY"
 else
     echo "Ready: $WORK_DIR/output"
-    echo "Use --publish to also create a new GitHub Release."
+    echo "Use --publish to upload the signed Mac packages to the version Release."
 fi
