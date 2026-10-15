@@ -41,6 +41,38 @@ def validate_run(run, repository, tag_commit):
     return tag
 
 
+def validate_reused_run(run, repository):
+    """Reuse a successful manual main build when only Markdown differs from its tag."""
+    if (run.get("status"), run.get("conclusion"), run.get("event"), run.get("head_branch")) != (
+            "completed", "success", "workflow_dispatch", "main"):
+        raise ValueError("Reuse requires a successful manual main build")
+    if (run.get("name"), run.get("path")) != (
+            "Build unsigned packages", ".github/workflows/build-and-notarize.yml"):
+        raise ValueError("Unexpected reusable build workflow")
+    if repository != RELEASE_REPOSITORY or any(
+            run.get(field, {}).get("full_name") != repository for field in ("repository", "head_repository")):
+        raise ValueError("Build must originate in this repository")
+    build_commit = run.get("head_sha", "")
+    if not re.fullmatch(r"[a-f0-9]{40}", build_commit):
+        raise ValueError("Invalid build commit")
+    content = api(f"repos/{repository}/contents/package.json?ref={build_commit}")
+    version = json.loads(base64.b64decode(content["content"]))["version"]
+    tag = "v" + version
+    if not re.fullmatch(VERSION_TAG_PATTERN, tag):
+        raise ValueError("Build package version is not releasable")
+    tag_commit = api(f"repos/{repository}/commits/{tag}")["sha"]
+    if build_commit != tag_commit:
+        comparison = api(f"repos/{repository}/compare/{build_commit}...{tag_commit}")
+        files = comparison.get("files")
+        # GitHub limits comparison files to 300; never accept a truncated diff.
+        if comparison.get("merge_base_commit", {}).get("sha") != build_commit or not isinstance(files, list) or len(files) >= 300:
+            raise ValueError("Cannot verify release source against the successful build")
+        if any(not file.get("filename", "").endswith(".md") or
+               (file.get("previous_filename") and not file["previous_filename"].endswith(".md")) for file in files):
+            raise ValueError("Release source differs from the successful build")
+    return tag, tag_commit
+
+
 def select_packages(root, version):
     packages = []
     # Previously only installers were published, dropping NSIS differential maps.
@@ -179,10 +211,15 @@ def main():
     run = api(f"repos/{repository}/actions/runs/{run_id}")
     candidate = run.get("head_branch", "")
     # if not re.fullmatch(r"v\d+\.\d+\.\d+", candidate):
-    if not re.fullmatch(VERSION_TAG_PATTERN, candidate):
-        raise ValueError("Build does not belong to a version tag")
-    commit = api(f"repos/{repository}/commits/{candidate}")["sha"]
-    tag = validate_run(run, repository, commit)
+    # if not re.fullmatch(VERSION_TAG_PATTERN, candidate):
+    #     raise ValueError("Build does not belong to a version tag")
+    # commit = api(f"repos/{repository}/commits/{candidate}")["sha"]
+    # tag = validate_run(run, repository, commit)
+    if re.fullmatch(VERSION_TAG_PATTERN, candidate):
+        commit = api(f"repos/{repository}/commits/{candidate}")["sha"]
+        tag = validate_run(run, repository, commit)
+    else:
+        tag, commit = validate_reused_run(run, repository)
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
         # for platform, artifact in (("windows", "windows-unsigned-build"), ("linux", "linux-build")):

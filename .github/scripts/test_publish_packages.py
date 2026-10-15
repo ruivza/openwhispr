@@ -13,6 +13,48 @@ spec.loader.exec_module(publisher)
 
 
 class PublishingTests(unittest.TestCase):
+    def reusable_run(self):
+        return dict(head_branch="main", head_sha="a" * 40, status="completed", conclusion="success",
+                    event="workflow_dispatch", name="Build unsigned packages",
+                    path=".github/workflows/build-and-notarize.yml",
+                    repository={"full_name": "ruivza/openwhispr"},
+                    head_repository={"full_name": "ruivza/openwhispr"})
+
+    def reuse_api_results(self, files):
+        return [{"content": base64.b64encode(b'{"version":"1.10.3-ruivza.2"}').decode()},
+                {"sha": "b" * 40}, {"merge_base_commit": {"sha": "a" * 40}, "files": files}]
+
+    def test_reuses_successful_main_build_when_only_documentation_changed(self):
+        with patch.object(publisher, "api", side_effect=self.reuse_api_results([
+                {"filename": "openwhispr-mobile/CONTRIBUTING.md"}])) as api:
+            self.assertEqual(publisher.validate_reused_run(self.reusable_run(), "ruivza/openwhispr"),
+                             ("v1.10.3-ruivza.2", "b" * 40))
+            self.assertIn("a" * 40, api.call_args_list[0].args[0])
+
+    def test_reuse_rejects_failed_untrusted_and_non_manual_main_builds_before_network(self):
+        for key, value in (("conclusion", "failure"), ("status", "in_progress"),
+                           ("event", "pull_request"), ("head_branch", "develop"),
+                           ("path", ".github/workflows/other.yml"), ("head_sha", "bad"),
+                           ("head_repository", {"full_name": "someone/fork"})):
+            with self.subTest(key=key), patch.object(publisher, "api") as api, self.assertRaises(ValueError):
+                publisher.validate_reused_run({**self.reusable_run(), key: value}, "ruivza/openwhispr")
+            api.assert_not_called()
+
+    def test_reuse_rejects_source_changes_and_code_renamed_as_documentation(self):
+        for files in ([{"filename": "package.json"}], [{"filename": "src/app.ts"}],
+                      [{"filename": "notes.md", "previous_filename": "main.js"}],
+                      [{"filename": "README.md"}] * 300):
+            with self.subTest(files=files[:1]), \
+                    patch.object(publisher, "api", side_effect=self.reuse_api_results(files)), \
+                    self.assertRaises(ValueError):
+                publisher.validate_reused_run(self.reusable_run(), "ruivza/openwhispr")
+
+    def test_reuse_rejects_unrelated_release_history(self):
+        responses = self.reuse_api_results([])
+        responses[-1]["merge_base_commit"]["sha"] = "c" * 40
+        with patch.object(publisher, "api", side_effect=responses), self.assertRaises(ValueError):
+            publisher.validate_reused_run(self.reusable_run(), "ruivza/openwhispr")
+
     def test_only_successful_same_repository_tag_builds(self):
         run = dict(head_branch="v1.10.4", status="completed", conclusion="success", event="push",
                    name="Build tagged packages (unsigned)", path=".github/workflows/release.yml",
@@ -179,6 +221,27 @@ class PublishingTests(unittest.TestCase):
             publisher.main()
         self.assertEqual(downloads, ["windows-unsigned-build"])
         self.assertEqual(set(published), {f"OpenWhispr-{tag[1:]}.exe", "SHA256SUMS-windows", "ruivza.yml"})
+
+    def test_main_reuses_existing_artifact_without_starting_a_build(self):
+        tag = "v1.10.3-ruivza.2"
+        calls = []
+
+        def download(*args):
+            calls.append(args)
+            self.assertEqual(args[:3], ("run", "download", "38694847321"))
+            destination = Path(args[args.index("--dir") + 1])
+            destination.mkdir()
+            (destination / f"OpenWhispr-{tag[1:]}.exe").write_bytes(b"existing installer")
+
+        with patch.dict(publisher.os.environ, RELEASE_REPOSITORY="ruivza/openwhispr", BUILD_RUN_ID="38694847321"), \
+                patch.object(publisher, "api", side_effect=[self.reusable_run(),
+                                                          *self.reuse_api_results([{"filename": "README.md"}]),
+                                                          {"sha": "b" * 40}]), \
+                patch.object(publisher, "gh", side_effect=download), \
+                patch.object(publisher, "upload_packages") as upload:
+            publisher.main()
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(upload.call_args.args[:2], ("ruivza/openwhispr", tag))
 
 
 if __name__ == "__main__":
