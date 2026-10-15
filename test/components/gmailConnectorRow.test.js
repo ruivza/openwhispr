@@ -50,9 +50,10 @@ const GMAIL = {
 const DISCONNECTED = { ...GMAIL, connected: false, accountLabel: null };
 
 // The Gmail row with the real status store, loaded from `status`.
+// The old isPaid prop is now local/policy availability, independent of a plan.
 async function renderGmailRow(
   t,
-  { status, isPaid = true, blockedByOrg = false, electronAPI = {} } = {}
+  { status, available = true, blockedByOrg = false, electronAPI = {} } = {}
 ) {
   let root = null;
   t.after(async () => {
@@ -91,7 +92,8 @@ async function renderGmailRow(
   const { createRoot } = require("react-dom/client");
   root = createRoot(container);
   await React.act(async () =>
-    root.render(React.createElement(ConnectorLoginRow, { row, isPaid, blockedByOrg }))
+    // root.render(React.createElement(ConnectorLoginRow, { row, isPaid, blockedByOrg }))
+    root.render(React.createElement(ConnectorLoginRow, { row, available, blockedByOrg }))
   );
   // Let the status load from the mount effect commit.
   await React.act(async () => {});
@@ -220,15 +222,15 @@ test("a disconnect that kept a grant the calendar shares says Google still lists
   assert.doesNotMatch(container.textContent, /connectors\.gmail\.grantKept/);
 });
 
-test("a free plan can still disconnect a Gmail login it has", async (t) => {
-  const container = await renderGmailRow(t, { status: GMAIL, isPaid: false });
+test("unavailable connector access can still disconnect an existing Gmail login", async (t) => {
+  const container = await renderGmailRow(t, { status: GMAIL, available: false });
   assert.equal(hasButton(container, "connectors.gmail.disconnect"), true);
   assert.equal(hasButton(container, "connectors.gmail.connect"), false);
   assert.equal(hasButton(container, "integrations.api.viewPlans"), false);
 });
 
-test("a free plan without a login still sees what Gmail does, with no button", async (t) => {
-  const container = await renderGmailRow(t, { status: DISCONNECTED, isPaid: false });
+test("unavailable connector access without a login still describes Gmail, with no button", async (t) => {
+  const container = await renderGmailRow(t, { status: DISCONNECTED, available: false });
   assert.match(container.textContent, /connectors\.gmail\.description/);
   assert.match(container.textContent, /connectors\.beta/);
   assert.equal(hasButton(container, "integrations.api.viewPlans"), false);
@@ -270,25 +272,25 @@ function textNode(root, text) {
 const lockIcon = (root) =>
   findElement(root, (element) => element.getAttribute?.("aria-label") === "connectors.locked");
 
-test("a free plan without a login sees Gmail dimmed, with a lock that says why", async (t) => {
-  const container = await renderGmailRow(t, { status: DISCONNECTED, isPaid: false });
+test("unavailable connector access without a login shows Gmail dimmed with a labelled lock", async (t) => {
+  const container = await renderGmailRow(t, { status: DISCONNECTED, available: false });
   assert.equal(isDimmed(textNode(container, "connectors.gmail.title")), true);
   assert.equal(isDimmed(textNode(container, "connectors.gmail.description")), true);
   assert.ok(lockIcon(container), "the lock is labelled for screen readers");
 });
 
-test("a free plan with a login sees Gmail at full contrast and unlocked", async (t) => {
-  const container = await renderGmailRow(t, { status: GMAIL, isPaid: false });
+test("unavailable connector access keeps an existing Gmail login at full contrast", async (t) => {
+  const container = await renderGmailRow(t, { status: GMAIL, available: false });
   assert.equal(isDimmed(textNode(container, "connectors.gmail.title")), false);
   assert.equal(isDimmed(button(container, "connectors.gmail.disconnect")), false);
   assert.equal(lockIcon(container), null);
 });
 
-test("on a free plan, what a disconnect leaves behind isn't dimmed with the locked row", async (t) => {
+test("a disconnect note stays readable when connector access is unavailable", async (t) => {
   let broadcast = null;
   const container = await renderGmailRow(t, {
     status: GMAIL,
-    isPaid: false,
+    available: false,
     electronAPI: {
       onConnectorStatusChanged: (listener) => {
         broadcast = listener;

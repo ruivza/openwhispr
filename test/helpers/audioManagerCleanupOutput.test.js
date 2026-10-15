@@ -14,6 +14,9 @@ test("invalid completed cleanup keeps raw text across dictation routes", async (
   const vite = await createRendererServer(t, {
     cachePrefix: "openwhispr-audio-cleanup-output-",
     mockModules: {
+      // Exercise retained cloud output validation with stubbed IPC, separately
+      // from the real fork's local/BYOK defaults and hosted-service guards.
+      "/config/fork.json": '{"officialAccountEnabled":true,"hostedServicesEnabled":true}',
       "/utils/logger":
         "export default { debug() {}, info() {}, warn() {}, error() {}, logReasoning() {} };",
     },
@@ -72,6 +75,7 @@ test("invalid completed cleanup keeps raw text across dictation routes", async (
           } else if (route === "streaming") {
             Object.assign(manager, {
               streamingFinalText: RAW,
+              _streamingUsesOpenWhisprCloud: true,
               streamingCleanupFns: [],
               micRecovery: { stop() {} },
               finishStreamingFallbackSegment: async () => {},

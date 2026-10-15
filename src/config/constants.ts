@@ -1,4 +1,4 @@
-import fork from "./fork.json";
+import fork from "./fork.json" with { type: "json" };
 
 // Split query/hash so path-suffix stripping and later joins operate on the
 // path only. Provider docs and Azure/gateway pastes often include ?api-version=

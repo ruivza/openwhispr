@@ -34,6 +34,8 @@ const windows = [1, 2, 3].map((id) => ({
 }));
 const mintToken = async (key) => `token-${key}`;
 let fetchToken = mintToken;
+let legacyHostedApiEnabled = false;
+let networkRequests = 0;
 const environmentManager = Object.fromEntries(
   bindings.flatMap(({ get, save, storeKey }) => [
     [get, () => keys.get(storeKey) || ""],
@@ -94,8 +96,8 @@ class FakeStreaming {
     return { text: "" };
   }
 }
-FakeStreaming.normalizeLanguage =
-  require("../../src/helpers/openaiRealtimeStreaming").normalizeLanguage;
+// Read normalizeLanguage after installing the Electron stub below; its module
+// imports the desktop logger, whose Windows initialization needs app.isPackaged.
 class FakeOrukeet extends FakeStreaming {}
 
 const modulePath = require.resolve("../../src/helpers/ipcHandlers");
@@ -127,13 +129,16 @@ const electron = {
   },
   net: {
     // BYOK mints present the saved key; managed ones present the account session.
-    fetch: async (_url, init) => ({
-      ok: true,
-      json: async () => {
-        const token = await fetchToken(init.headers.Authorization);
-        return { token, clientSecret: token, clientSecrets: [token, token] };
-      },
-    }),
+    fetch: async (_url, init) => {
+      networkRequests += 1;
+      return {
+        ok: true,
+        json: async () => {
+          const token = await fetchToken(init.headers.Authorization);
+          return { token, clientSecret: token, clientSecrets: [token, token] };
+        },
+      };
+    },
   },
   shell: {},
   dialog: {},
@@ -149,6 +154,18 @@ Module._load = function (request, parent, isMain) {
       return { TinfoilRealtimeStreaming: FakeStreaming };
   }
   if (parent?.filename === modulePath) {
+    // Historical managed-socket contracts need an explicit test-only API.
+    // The default branch still uses the shipping fork's disabled resolver.
+    if (request === "./forkServiceConfig") {
+      const config = originalLoad.call(this, request, parent, isMain);
+      return {
+        ...config,
+        resolveHostedApiUrl: (env, runtime) =>
+          legacyHostedApiEnabled
+            ? env.OPENWHISPR_API_URL || ""
+            : config.resolveHostedApiUrl(env, runtime),
+      };
+    }
     if (streamingModules.includes(request)) return FakeStreaming;
     if (request === "./orukeetStreaming")
       return { OrukeetStreaming: FakeOrukeet, MANAGED_STREAM_OPTIONS: {} };
@@ -170,6 +187,8 @@ Module._load = function (request, parent, isMain) {
 test.after(() => {
   Module._load = originalLoad;
 });
+FakeStreaming.normalizeLanguage =
+  require("../../src/helpers/openaiRealtimeStreaming").normalizeLanguage;
 
 function anything() {
   return new Proxy(function () {}, {
@@ -210,11 +229,15 @@ test.before(() => {
 });
 const invoke = (channel, ...args) => handlers.get(channel)({ sender: editor }, ...args);
 
-// Managed starts mint from the account, which needs an API URL.
-function withManagedApi(t) {
+// Managed starts mint from the account, which needs an API URL. Only preserved
+// legacy tests opt in; setting an old API environment alone must remain blocked.
+function withManagedApi(t, enableLegacy = true) {
   const previous = process.env.OPENWHISPR_API_URL;
+  const previousEnabled = legacyHostedApiEnabled;
+  legacyHostedApiEnabled = enableLegacy;
   process.env.OPENWHISPR_API_URL = "https://api.openwhispr.test";
   t.after(() => {
+    legacyHostedApiEnabled = previousEnabled;
     if (previous === undefined) delete process.env.OPENWHISPR_API_URL;
     else process.env.OPENWHISPR_API_URL = previous;
   });
@@ -223,6 +246,23 @@ function withManagedApi(t) {
 // Gemini keeps one connection, warm or live, so its start reports the reuse.
 const rodeWarm = (provider, property, result) =>
   provider === "gemini" ? result.usedWarmConnection : target[property].rodeWarm;
+
+test("the shipping fork rejects managed warmups and meetings before any token request", async (t) => {
+  withManagedApi(t, false);
+  const before = networkRequests;
+  for (const channel of [
+    "assemblyai-streaming-warmup",
+    "deepgram-streaming-warmup",
+    "gemini-streaming-warmup",
+    "dictation-realtime-warmup",
+    "meeting-transcription-prepare",
+  ]) {
+    const result = await invoke(channel, { mode: "openwhispr", provider: "openai-realtime" });
+    assert.equal(result.success, false, channel);
+    assert.match(result.error, /not configured/, channel);
+  }
+  assert.equal(networkRequests, before, "retired managed routes must not request a token");
+});
 
 test("every secret saver notifies peers by name only, including removal", () => {
   for (const { channel, storeKey, get } of bindings) {

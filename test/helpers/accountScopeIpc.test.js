@@ -7,6 +7,7 @@ const Module = require("node:module");
 
 const handlersModulePath = require.resolve("../../src/helpers/ipcHandlers");
 const originalLoad = Module._load;
+const forkFixture = { ...require("../../src/config/fork.json"), officialAccountEnabled: true };
 
 // Registers the real handler closures against a fake `this` (the scaffolding
 // from agentDictationPillIpc.test.js) with the bearer state under test control
@@ -62,6 +63,8 @@ const electronStub = {
 Module._load = function loadWithMocks(request, parent, isMain) {
   if (request === "electron") return electronStub;
   if (parent?.filename === handlersModulePath) {
+    // Retain the official scope protocol tests under an explicit legacy fixture.
+    if (request === "../config/fork.json") return forkFixture;
     if (request === "./tokenStore") {
       return {
         get: () => tokenState.token,
@@ -87,8 +90,8 @@ function anything() {
   });
 }
 
-// Each call with the binding file as it stood then: a connect must be stopped
-// only once the scope it ran under is gone.
+// Retain an account-change spy to prove local connector identities no longer
+// follow the official account scope or token lifecycle.
 const connectorCalls = [];
 const connectorManager = {
   accountChanged: () => connectorCalls.push(["accountChanged", readBinding()?.accountId ?? null]),
@@ -133,6 +136,30 @@ const getScope = () => handlers.get("get-active-account-scope")();
 const setScope = (accountId, generation) =>
   handlers.get("set-active-account-scope")({}, accountId, generation);
 
+test("the default fork rejects official account scoping without disturbing local connectors", async () => {
+  assert.equal(require("../../src/config/fork.json").officialAccountEnabled, false);
+  forkFixture.officialAccountEnabled = false;
+  try {
+    tokenState = { token: "retired-token", generation: 1 };
+    broadcasts.length = 0;
+    connectorCalls.length = 0;
+    databaseScopes.length = 0;
+    assert.deepEqual(await setScope("retired-account", 1), {
+      success: false,
+      code: "ACCOUNT_DISABLED",
+    });
+    assert.equal(await getScope(), null);
+    handleAuthTokenChange({ token: null, generation: 2 });
+    assert.deepEqual(broadcasts, []);
+    assert.deepEqual(connectorCalls, []);
+    assert.deepEqual(databaseScopes, []);
+    assert.deepEqual(await setScope(null, 2), { success: true });
+    assert.deepEqual(databaseScopes, [null]);
+  } finally {
+    forkFixture.officialAccountEnabled = true;
+  }
+});
+
 test("no scope is readable before a session has been validated", async () => {
   tokenState = { token: "token-a", generation: 1 };
   assert.equal(await getScope(), null);
@@ -172,20 +199,15 @@ test("a validated sign-out clears the scope and broadcasts the clearing", async 
   assert.deepEqual(broadcasts, [["active-account-scope-changed", null]]);
 });
 
-test("a scope change stops connects another account started, after the scope moves", async () => {
+test("official scope changes preserve the independent local connector profile", async () => {
   tokenState = { token: "token-c", generation: 5 };
   connectorCalls.length = 0;
   await setScope("account-c", 5);
   await setScope(null, 5);
-  assert.deepEqual(connectorCalls, [
-    ["accountChanged", "account-c"],
-    ["notifyStatusChanged"],
-    ["accountChanged", null],
-    ["notifyStatusChanged"],
-  ]);
+  assert.deepEqual(connectorCalls, [["notifyStatusChanged"], ["notifyStatusChanged"]]);
 });
 
-test("a sign-out in main stops connects without waiting for the renderer", async () => {
+test("a main-process sign-out clears the official scope without stopping local connects", async () => {
   tokenState = { token: "token-d", generation: 6 };
   await setScope("account-d", 6);
   connectorCalls.length = 0;
@@ -198,7 +220,7 @@ test("a sign-out in main stops connects without waiting for the renderer", async
   databaseScopes.length = 0;
   broadcasts.length = 0;
   handleAuthTokenChange({ generation: 8, token: null });
-  assert.deepEqual(connectorCalls, [["accountChanged", null], ["notifyStatusChanged"]]);
+  assert.deepEqual(connectorCalls, [["notifyStatusChanged"]]);
   assert.equal(readBinding(), null);
   assert.deepEqual(databaseScopes, [null]);
   assert.deepEqual(broadcasts, [

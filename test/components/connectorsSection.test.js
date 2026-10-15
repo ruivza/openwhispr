@@ -17,7 +17,8 @@ const MOCKS = {
   `,
   "/stores/settingsStore": `
     const state = {
-      isSignedIn: true,
+      // isSignedIn: true,
+      isSignedIn: false,
       emailDraftTarget: globalThis.__emailDraftTarget ?? "auto",
       setEmailDraftTarget() {},
       gcalConnected: false,
@@ -26,11 +27,13 @@ const MOCKS = {
     export function useSettingsStore(selector) { return selector(state); }
   `,
   "/lib/usageStore": `
-    export const getUsageState = () => globalThis.__usage;
+    // export const getUsageState = () => globalThis.__usage;
+    export const getUsageState = () => { throw new Error("Local connectors must not read hosted usage"); };
     export const subscribeUsage = () => () => {};
   `,
   "/lib/subscriptionFlag": `
-    export const readIsSubscribed = () => Boolean(globalThis.__subscribedFlag);
+    // export const readIsSubscribed = () => Boolean(globalThis.__subscribedFlag);
+    export const readIsSubscribed = () => { throw new Error("Local connectors must not read hosted subscriptions"); };
     export const subscribeIsSubscribed = () => () => {};
   `,
   "react-i18next": `
@@ -172,21 +175,28 @@ test("while usage is unknown, the card follows the saved flag like the chat does
   assert.match(textContent, /connectors\.email\.description/);
 });
 
-test("while usage is unknown and the flag is unset, the card asks for a plan", async (t) => {
+test("unknown hosted usage and an unset flag do not gate local connectors", async (t) => {
   const loading = { status: "loading", accountId: "acct" };
   const { textContent } = await renderSection(t, { usageState: loading, subscribedFlag: false });
-  assert.match(textContent, /connectors\.upsell/);
+  // Original hosted expectation: assert.match(textContent, /connectors\.upsell/);
+  assert.doesNotMatch(textContent, /connectors\.upsell|integrations\.api\.viewPlans/);
+  assert.match(textContent, /connectors\.email\.targets\.gmail/);
 });
 
-test("free users see one upsell above the connectors, which still say what they do", async (t) => {
+test("local users without a subscription see connector descriptions and Connect without an upsell", async (t) => {
   const container = await renderSection(t, { usageState: usage(false) });
-  assert.match(container.textContent, /connectors\.upsell/);
+  // assert.match(container.textContent, /connectors\.upsell/);
+  assert.doesNotMatch(container.textContent, /connectors\.upsell|integrations\.api\.viewPlans/);
   assert.match(container.textContent, /connectors\.email\.description/);
-  assert.doesNotMatch(container.textContent, /connectors\.email\.targets\.gmail/);
-  // The section's first button is the upsell's primary View plans.
-  const button = findElement(container, (node) => node.tagName === "BUTTON");
-  assert.match(button.textContent, /integrations\.api\.viewPlans/);
-  assert.equal(button.getAttribute("variant"), null);
+  // assert.doesNotMatch(container.textContent, /connectors\.email\.targets\.gmail/);
+  assert.match(container.textContent, /connectors\.email\.targets\.gmail/);
+  // The original first button was the hosted upsell's primary View plans.
+  // const button = findElement(container, (node) => node.tagName === "BUTTON");
+  // assert.match(button.textContent, /integrations\.api\.viewPlans/);
+  // assert.equal(button.getAttribute("variant"), null);
+  for (const connector of ["gmail", "slack", "linear", "github"]) {
+    assert.ok(buttonWithText(container, `connectors.${connector}.connect`));
+  }
 });
 
 test("an org that turned connectors off sees why, under the card's header", async (t) => {
@@ -217,10 +227,13 @@ test("while the policy is unresolved, the card says drafts are unavailable", asy
   assert.equal(fetches, 0);
 });
 
-test("an unresolved policy doesn't hide the upsell from a free user", async (t) => {
+test("an unresolved policy blocks local actions without showing a subscription upsell", async (t) => {
   const { textContent } = await renderSection(t, { usageState: usage(false), allowed: false });
-  assert.match(textContent, /connectors\.upsell/);
-  assert.match(textContent, /integrations\.api\.viewPlans/);
+  // assert.match(textContent, /connectors\.upsell/);
+  // assert.match(textContent, /integrations\.api\.viewPlans/);
+  assert.doesNotMatch(textContent, /connectors\.upsell|integrations\.api\.viewPlans/);
+  assert.match(textContent, /connectors\.email\.unavailable/);
+  assert.doesNotMatch(textContent, /connectors\.email\.targets/);
 });
 
 test("Connectors shows no recent actions or receipt content and never fetches history", async (t) => {
@@ -276,22 +289,27 @@ test("a stale login offers Reconnect and Disconnect", async (t) => {
   assert.match(staleMarkup, /connectors\.slack\.needsReconnect/);
 });
 
-test("free users with no login see a single View plans and no Connect", async (t) => {
+test("local users without an official login or plan can connect all configured providers", async (t) => {
   const none = await renderSection(t, { isPaid: false, blocked: false });
-  assert.equal(count(none.textContent, /integrations\.api\.viewPlans/g), 1);
-  assert.equal(buttonWithText(none, "connectors.slack.connect"), null);
+  // assert.equal(count(none.textContent, /integrations\.api\.viewPlans/g), 1);
+  // assert.equal(buttonWithText(none, "connectors.slack.connect"), null);
+  assert.equal(count(none.textContent, /integrations\.api\.viewPlans/g), 0);
+  for (const connector of ["gmail", "slack", "linear", "github"]) {
+    assert.ok(buttonWithText(none, `connectors.${connector}.connect`));
+  }
   // Every connector is still listed, each marked beta: email, Gmail, Slack, Linear and GitHub.
   assert.equal(count(none.textContent, /connectors\.beta/g), 5);
 });
 
-test("free users can always disconnect a login they have", async (t) => {
+test("local users can disconnect an existing login without a plan upsell", async (t) => {
   const lapsed = await renderSection(t, {
     isPaid: false,
     blocked: false,
     statuses: { slack: SLACK },
   });
   assert.match(lapsed.textContent, /connectors\.slack\.disconnect/);
-  assert.equal(count(lapsed.textContent, /integrations\.api\.viewPlans/g), 1);
+  // assert.equal(count(lapsed.textContent, /integrations\.api\.viewPlans/g), 1);
+  assert.equal(count(lapsed.textContent, /integrations\.api\.viewPlans/g), 0);
 });
 
 test("an org that turned connectors off still lets the user remove a login", async (t) => {

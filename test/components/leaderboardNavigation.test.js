@@ -2,10 +2,15 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const React = require("react");
+const { renderToStaticMarkup } = require("react-dom/server");
+const { createRendererServer, installBrowserGlobals } = require("../lib/rendererTestHarness");
 
 const read = (relativePath) => fs.readFileSync(path.join(__dirname, "../..", relativePath), "utf8");
 
-test("the leaderboard is tabbed inside the Insights view", () => {
+// Official leaderboard/cloud analytics UI is disabled in this fork. Retain the
+// historical layout contract; the active local Insights view is rendered below.
+test.skip("the leaderboard is tabbed inside the Insights view", () => {
   const controlPanel = read("src/components/ControlPanel.tsx");
   const sidebar = read("src/components/ControlPanelSidebar.tsx");
   const insights = read("src/components/InsightsView.tsx");
@@ -61,6 +66,29 @@ test("the leaderboard is tabbed inside the Insights view", () => {
   assert.ok(leaderboard.includes("onJoin={joinLeaderboard}"));
   assert.equal(leaderboard.includes('<h1 className="text-base!'), false);
   assert.equal(leaderboard.includes('t("insights.leaderboard.description")'), false);
+});
+
+test("local Insights retains device usage while hiding leaderboard and cloud opt-in", async (t) => {
+  installBrowserGlobals(t);
+  const vite = await createRendererServer(t, {
+    cachePrefix: "openwhispr-local-insights-",
+    mockModules: {
+      "react-i18next": `export const useTranslation = () => ({ t: (key) => key, i18n: { language: "en" } });`,
+      "/hooks/useAuth": `export const useAuth = () => ({ isLoaded: true, isSignedIn: true, user: { id: "legacy-account" } });`,
+      "/hooks/useSettings": `export const useSettings = () => ({ dataRetentionEnabled: true, insightsSyncEnabled: true });`,
+      "/hooks/useInsightsSyncOptIn": `export const useInsightsSyncOptIn = () => ({ canToggleSync: false, enableInsightsSync() { throw new Error("Unexpected cloud opt-in"); }, optInDialog: null, syncAllowedByPolicy: true, unclaimedCount: 1 });`,
+      "/lib/authRequestContext": `export const hasValidatedAuthContext = () => true;`,
+    },
+  });
+  const { default: InsightsView } = await vite.ssrLoadModule("/components/InsightsView.tsx");
+  const markup = renderToStaticMarkup(React.createElement(InsightsView, { onSignIn() {} }));
+  assert.equal(markup.match(/role="tab"/g)?.length, 1, "only local usage has a visible tab");
+  assert.match(markup, /trigger-usage/);
+  assert.match(markup, /<p class="mt-auto pt-8[^"]*">[^<]+<\/p>/);
+  assert.doesNotMatch(
+    markup,
+    /<button\b[^>]*id="[^"]*trigger-leaderboard|data-icon="cloud-upload"/
+  );
 });
 
 test("analytics and leaderboard consent copy are concise and independently scoped", () => {

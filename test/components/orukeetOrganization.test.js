@@ -87,13 +87,14 @@ test("a saved stock Parakeet choice opens NVIDIA while retaining Oruk as a selec
   assert.doesNotMatch(markup, />Orukeet</);
 });
 
-test("adding Orukeet preserves fresh-install transcription modes and existing backend defaults", async (t) => {
+test("adding Orukeet preserves fresh local-fork transcription modes and existing backend defaults", async (t) => {
   const vite = await renderer(t);
   const { useSettingsStore } = await vite.ssrLoadModule("/stores/settingsStore.ts");
   const state = useSettingsStore.getState();
   for (const prefix of ["", "meeting", "upload"]) {
     const key = (name) => (prefix ? prefix + name[0].toUpperCase() + name.slice(1) : name);
-    assert.equal(state[key("useLocalWhisper")], false);
+    assert.equal(state[key("useLocalWhisper")], true);
+    assert.equal(state[key("transcriptionMode")], "local");
     assert.equal(state[key("localTranscriptionProvider")], "whisper");
     assert.equal(state[key("parakeetModel")], "");
   }

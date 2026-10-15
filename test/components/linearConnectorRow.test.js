@@ -51,9 +51,10 @@ const DISCONNECTED = { ...LINEAR, connected: false, accountLabel: null, workspac
 
 // The Linear entry of CONNECTOR_ROWS in the shared login row, with the real
 // status store loaded from `status`.
+// The old isPaid prop is now local/policy availability, independent of a plan.
 async function renderLinearRow(
   t,
-  { status, isPaid = true, blockedByOrg = false, electronAPI = {} } = {}
+  { status, available = true, blockedByOrg = false, electronAPI = {} } = {}
 ) {
   let root = null;
   t.after(async () => {
@@ -93,7 +94,8 @@ async function renderLinearRow(
   const { createRoot } = require("react-dom/client");
   root = createRoot(container);
   await React.act(async () =>
-    root.render(React.createElement(ConnectorLoginRow, { row, isPaid, blockedByOrg }))
+    // root.render(React.createElement(ConnectorLoginRow, { row, isPaid, blockedByOrg }))
+    root.render(React.createElement(ConnectorLoginRow, { row, available, blockedByOrg }))
   );
   // Let the status load from the mount effect commit.
   await React.act(async () => {});
@@ -164,14 +166,14 @@ test("a Linear login that needs reconnecting offers Reconnect and Disconnect", a
   assert.equal(hasButton(container, "connectors.linear.disconnect"), true);
 });
 
-test("a free plan can still disconnect a Linear login it has", async (t) => {
-  const connected = await renderLinearRow(t, { status: LINEAR, isPaid: false });
+test("unavailable connector access can still disconnect an existing Linear login", async (t) => {
+  const connected = await renderLinearRow(t, { status: LINEAR, available: false });
   assert.equal(hasButton(connected.container, "connectors.linear.disconnect"), true);
   assert.equal(hasButton(connected.container, "connectors.linear.connect"), false);
 });
 
-test("a free plan without a Linear login still sees what Linear does, with no button", async (t) => {
-  const { container } = await renderLinearRow(t, { status: DISCONNECTED, isPaid: false });
+test("unavailable connector access without a Linear login still describes it, with no button", async (t) => {
+  const { container } = await renderLinearRow(t, { status: DISCONNECTED, available: false });
   assert.match(container.textContent, /connectors\.linear\.description/);
   assert.equal(hasButton(container, "integrations.api.viewPlans"), false);
   assert.equal(hasButton(container, "connectors.linear.connect"), false);

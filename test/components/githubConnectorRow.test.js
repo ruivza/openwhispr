@@ -89,9 +89,10 @@ function pendingConnect() {
 }
 
 // The GitHub entry of CONNECTOR_ROWS on the real row and status store.
+// The old isPaid prop is now local/policy availability, independent of a plan.
 async function renderGithubRow(
   t,
-  { status, isPaid = true, blockedByOrg = false, electronAPI = {}, rowId = "github" } = {}
+  { status, available = true, blockedByOrg = false, electronAPI = {}, rowId = "github" } = {}
 ) {
   let root = null;
   t.after(async () => {
@@ -179,7 +180,8 @@ async function renderGithubRow(
       root.render(
         React.createElement(ConnectorLoginRow, {
           row,
-          isPaid,
+          // isPaid,
+          available,
           blockedByOrg,
           ...props,
         })
@@ -803,8 +805,8 @@ test("with connectors turned off by the org, only Disconnect remains", async (t)
   assert.equal(hasButton(container, "connectors.github.repositories.manage"), false);
 });
 
-test("a free plan keeps Disconnect for its login but can't manage repositories", async (t) => {
-  const { container } = await renderGithubRow(t, { status: GITHUB, isPaid: false });
+test("unavailable connector access keeps Disconnect but can't manage repositories", async (t) => {
+  const { container } = await renderGithubRow(t, { status: GITHUB, available: false });
   assert.equal(hasButton(container, "connectors.github.disconnect"), true);
   assert.equal(hasButton(container, "connectors.github.repositories.manage"), false);
 });
