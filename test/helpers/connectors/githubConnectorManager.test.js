@@ -15,7 +15,10 @@ const CREATE = "POST /repos/acme/api/issues";
 const TOKEN = "POST /login/oauth/access_token";
 const ALLOWED = { policyState: "allowed", accountId: "acct-1" };
 const INSTALL_URL = "https://github.com/apps/openwhispr-dev/installations/new";
-const ENV = { GITHUB_APP_CLIENT_ID: "Iv1.test-client", GITHUB_APP_SLUG: "openwhispr-dev" };
+const ENV = {
+  CONNECTOR_GITHUB_APP_CLIENT_ID: "Iv1.test-client",
+  CONNECTOR_GITHUB_APP_SLUG: "openwhispr-dev",
+};
 const silentLogger = { info() {}, warn() {}, error() {} };
 const INSTALLED = {
   [INSTALLATIONS]: [json({ total_count: 1, installations: [{ id: 7 }] })],
@@ -116,7 +119,11 @@ async function setupRevokes({ signsIn }) {
   const credentials = memoryCredentials(CONNECTED, { connectorId: "github" });
   const revoked = [];
   const auth = {
-    ...createGithubAuth({ api, credentials, getClientId: () => ENV.GITHUB_APP_CLIENT_ID }),
+    ...createGithubAuth({
+      api,
+      credentials,
+      getClientId: () => ENV.CONNECTOR_GITHUB_APP_CLIENT_ID,
+    }),
     authorize: async () => signsIn,
     revoke: async (credential) => {
       revoked.push(credential);
@@ -127,7 +134,7 @@ async function setupRevokes({ signsIn }) {
     auth,
     installations: createGithubInstallations({ api }),
     credentials,
-    getSlug: () => ENV.GITHUB_APP_SLUG,
+    getSlug: () => ENV.CONNECTOR_GITHUB_APP_SLUG,
   });
   const manager = createConnectorManager({
     connectors: [connector],

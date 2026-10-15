@@ -14,9 +14,9 @@ import { PrivateDownloadStep } from './steps/PrivateDownloadStep';
 import { LanguageStep } from './steps/LanguageStep';
 import { NotificationsStep } from './steps/NotificationsStep';
 import { GraduationStep } from './steps/GraduationStep';
-import { PaywallStep } from './steps/PaywallStep';
-import { CreateAccountStep } from './steps/CreateAccountStep';
-import { TrackingPermissionStep } from './steps/TrackingPermissionStep';
+// import { PaywallStep } from './steps/PaywallStep';
+// import { CreateAccountStep } from './steps/CreateAccountStep';
+// import { TrackingPermissionStep } from './steps/TrackingPermissionStep';
 
 // Exhaustive by type: adding a step id without a screen is a compile error,
 // which is safer than falling back to a placeholder at runtime.
@@ -34,9 +34,12 @@ const STEP_COMPONENTS: Record<OnboardingStepId, ComponentType> = {
   language: LanguageStep,
   notifications: NotificationsStep,
   graduation: GraduationStep,
-  paywall: PaywallStep,
-  'create-account': CreateAccountStep,
-  'tracking-permission': TrackingPermissionStep,
+  // paywall: PaywallStep,
+  // 'create-account': CreateAccountStep,
+  // 'tracking-permission': TrackingPermissionStep,
+  paywall: GraduationStep,
+  'create-account': GraduationStep,
+  'tracking-permission': GraduationStep,
 };
 
 export function OnboardingFlow(): ReactElement {

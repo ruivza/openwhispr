@@ -18,7 +18,8 @@ export function PrivacyModeStep(): ReactElement {
   const cancelActiveDownloads = useModelDownloadStore((state) => state.cancelActiveDownloads);
   // Revisiting the step keeps the earlier Local choice; otherwise Cloud is the default.
   const [choice, setChoice] = useState<ModeChoice>(
-    selectedMode === 'private' ? 'private' : 'cloud',
+    // selectedMode === 'private' ? 'private' : 'cloud',
+    'private',
   );
 
   const handleContinue = async (): Promise<void> => {
@@ -47,6 +48,7 @@ export function PrivacyModeStep(): ReactElement {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ gap: 12, paddingTop: 4, paddingBottom: 8 }}
       >
+        {/* Official cloud choice disabled; original card retained.
         <ModeCard
           title="OpenWhispr Cloud"
           icon={<OpenWhisprMark size={20} color={BRAND} />}
@@ -58,6 +60,7 @@ export function PrivacyModeStep(): ReactElement {
           <Bullet text="Higher quality" />
           <Bullet text="Automatic cleanup & formatting" />
         </ModeCard>
+        */}
         <ModeCard
           title="Local · Private mode"
           icon={<SystemIcon name="lock.fill" mdName="Lock" size={18} color="brand" />}

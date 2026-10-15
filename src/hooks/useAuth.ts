@@ -30,6 +30,7 @@ import { useSettingsStore } from "../stores/settingsStore";
 import { usePolicyStore } from "../stores/policyStore";
 import { useEnterpriseIdentityStore } from "../stores/enterpriseIdentityStore";
 import { useLeaderboardParticipationStore } from "../stores/leaderboardParticipationStore";
+import forkConfig from "../config/fork.json";
 
 const useStaticSession = () => ({
   data: null,
@@ -70,7 +71,10 @@ async function refreshManagedEnterpriseIdentity(accountId: string, authGeneratio
 }
 
 export function useAuth() {
-  const useSession = authClient?.useSession ?? useStaticSession;
+  // Original official-account session: authClient?.useSession ?? useStaticSession.
+  const useSession = forkConfig.officialAccountEnabled
+    ? (authClient?.useSession ?? useStaticSession)
+    : useStaticSession;
   const { data: ambientSession, isPending, error: sessionError, refetch } = useSession();
   const accountRevision = useSyncExternalStore(
     subscribeAccountScope,
@@ -88,7 +92,12 @@ export function useAuth() {
   const ambientUserId = typeof ambientUser?.id === "string" ? ambientUser.id : null;
   // Not gated on sessionError: the binding survives a transient refetch failure
   // and is cleared on its own by a 401 or a credential-generation change.
-  const boundGeneration = isPending ? null : getBoundSessionGeneration(ambientUserId);
+  // Original binding: isPending ? null : getBoundSessionGeneration(ambientUserId).
+  // A cached signed-out binding must not start account reconciliation in this build.
+  const boundGeneration =
+    !forkConfig.officialAccountEnabled || isPending
+      ? null
+      : getBoundSessionGeneration(ambientUserId);
   const sessionIsBound = boundGeneration != null;
   const resolvedUserId = sessionIsBound ? ambientUserId : null;
   const rawIsSignedIn = sessionIsBound && Boolean(ambientUser);

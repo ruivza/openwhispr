@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { PermissionGuideId } from "../../types/permissionGuide";
+import forkConfig from "../../config/fork.json";
 import {
   LEGACY_ONBOARDING_STEP_KEY,
   ONBOARDING_SESSION_KEY,
@@ -12,11 +13,24 @@ import {
   type OnboardingStepId,
 } from "./flow";
 
+export function normalizeForkOnboardingSession(session: OnboardingSession): OnboardingSession {
+  if (forkConfig.officialAccountEnabled) return session;
+  // Preserve the account flow; this build starts at real permission grants.
+  return {
+    ...session,
+    authPath: "guest",
+    setupMode: session.setupMode === "cloud" ? null : session.setupMode,
+    currentStepId: session.currentStepId === "auth" ? "permissions" : session.currentStepId,
+    history: session.history.filter((step) => step !== "auth"),
+  };
+}
+
 function readInitialSession(): OnboardingSession {
-  if (typeof window === "undefined") return createOnboardingSession();
+  if (typeof window === "undefined")
+    return normalizeForkOnboardingSession(createOnboardingSession());
 
   const stored = parseOnboardingSession(localStorage.getItem(ONBOARDING_SESSION_KEY));
-  if (stored) return stored;
+  if (stored) return normalizeForkOnboardingSession(stored);
 
   const session = createOnboardingSession();
   session.currentStepId = migrateLegacyOnboardingStep(
@@ -31,7 +45,7 @@ function readInitialSession(): OnboardingSession {
     // group the legacy map exists for would always restart from scratch.
     session.authPath = "account";
   }
-  return session;
+  return normalizeForkOnboardingSession(session);
 }
 
 export function useOnboardingSession() {

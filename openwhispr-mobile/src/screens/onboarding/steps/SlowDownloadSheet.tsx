@@ -62,8 +62,8 @@ export function SlowDownloadSheet({
               Download taking a while?
             </Text>
             <Text className="mt-1.5 text-[15px] leading-[20px] text-secondaryLabel">
-              No need to wait. Continue setup on Cloud now — we&apos;ll finish your Private download
-              in the background.
+              {/* No need to wait. Continue setup on Cloud now — we&apos;ll finish your Private download in the background. */}
+              Continue setup while your local model downloads in the background.
             </Text>
 
             <View className="mt-4 rounded-2xl border border-separator bg-secondarySystemGroupedBackground p-4">
@@ -83,7 +83,8 @@ export function SlowDownloadSheet({
                 </Text>
               ) : null}
               <Button onPress={() => void continueCloud()} loading={busy} size="lg">
-                Continue with Cloud for now
+                {/* Continue with Cloud for now */}
+                Continue setup
               </Button>
               <Pressable
                 onPress={keepWaiting}

@@ -11,13 +11,14 @@ export function useOnboardingPracticeMode(): { localSelected: boolean } {
   const selectedMode = useOnboardingStore((state) => state.selectedMode);
   // Replaying onboarding starts with no choice made, but a saved Local default still stands.
   const savedMode = useConfigStore((state) => state.config?.defaultMode);
-  const localSelected = (selectedMode ?? savedMode) === 'private';
+  // const localSelected = (selectedMode ?? savedMode) === 'private';
+  const localSelected = true; // Practice uses examples before a local model is ready.
 
   useEffect(() => {
     // Practice may use Cloud before the choice, but must never override a Local choice.
     if (selectedMode !== null || localSelected) return;
     const previous = useProcessingModeStore.getState();
-    previous.setActiveMode('cloud', true);
+    // previous.setActiveMode('cloud', true);
     return () => {
       useProcessingModeStore.getState().setActiveMode(previous.activeMode, previous.isUserOverride);
     };

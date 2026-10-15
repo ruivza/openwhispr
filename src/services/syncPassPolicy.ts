@@ -36,11 +36,13 @@ export function resolveSyncConsent(state: {
   return {
     shared,
     backup: shared && state.backupEnabled && state.subscribed && state.backupAllowedByPolicy,
-    analytics:
-      shared &&
-      state.insightsSyncEnabled &&
-      state.backupAllowedByPolicy &&
-      state.dataRetentionEnabled,
+    // Cloud analytics are disabled, including preferences saved by older builds.
+    analytics: false,
+    // analytics:
+    //   shared &&
+    //   state.insightsSyncEnabled &&
+    //   state.backupAllowedByPolicy &&
+    //   state.dataRetentionEnabled,
   };
 }
 
@@ -64,8 +66,10 @@ export function canOfferAnalyticsClaim(state: {
   insightsSyncEnabled: boolean;
   unclaimedCount: number;
 }): boolean {
-  if (!state.signedIn || !state.syncAllowedByPolicy || !state.dataRetentionEnabled) return false;
-  return !state.insightsSyncEnabled || state.unclaimedCount > 0;
+  // Local counters stay on this device; do not offer to claim them for upload.
+  return false;
+  // if (!state.signedIn || !state.syncAllowedByPolicy || !state.dataRetentionEnabled) return false;
+  // return !state.insightsSyncEnabled || state.unclaimedCount > 0;
 }
 
 const TEAM_ONLY_PASS_BASE_MS = 5 * 60 * 1000;

@@ -1,3 +1,42 @@
+// Telemetry disabled in this build. Original implementation retained below.
+import { useOnboardingStep } from '@/hooks/useOnboardingStep';
+import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
+import { View } from 'react-native';
+import { OnboardingShell } from '@/components/onboarding/OnboardingShell';
+import { describeOnboardingError } from '@/lib/onboardingErrors';
+
+// Keep the saved step identifier valid while skipping all ATT education and SDK calls.
+export function TrackingPermissionStep(): ReactElement {
+  const { goNext } = useOnboardingStep('tracking-permission');
+  const [advanceError, setAdvanceError] = useState<string | null>(null);
+  const finishingRef = useRef(false);
+
+  const continueToCompletion = useCallback(async (): Promise<void> => {
+    if (finishingRef.current) return;
+    finishingRef.current = true;
+    setAdvanceError(null);
+    try {
+      await goNext();
+    } catch (error) {
+      finishingRef.current = false;
+      setAdvanceError(describeOnboardingError(error, 'Could not save progress.'));
+    }
+  }, [goNext]);
+
+  useEffect(() => {
+    void continueToCompletion();
+  }, [continueToCompletion]);
+
+  if (!advanceError) return <View className="flex-1 bg-systemBackground" />;
+
+  return (
+    <OnboardingShell title="" subtitle={advanceError} ctaLabel="Retry" onCta={continueToCompletion}>
+      <View className="flex-1" />
+    </OnboardingShell>
+  );
+}
+
+/*
 import { useOnboardingStep } from '@/hooks/useOnboardingStep';
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
 import { ActivityIndicator, ScrollView, View } from 'react-native';
@@ -183,3 +222,4 @@ export function TrackingPermissionStep(): ReactElement {
     </OnboardingShell>
   );
 }
+*/

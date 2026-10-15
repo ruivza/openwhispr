@@ -12,7 +12,7 @@ Usage: bash scripts/release-local.sh --run RUN_ID [--repo OWNER/REPO] [--arch al
 
 Download a successful tagged build and sign/notarize macOS packages locally.
 Default: sign both Mac architectures and keep the DMGs under build/.
---publish adds signed Mac DMGs and checksums to the version Release.
+--publish adds signed Mac DMGs, update ZIPs, manifests and checksums to the version Release.
 GitHub publishes Windows/Linux packages separately. Existing assets are not replaced.
 --arch selects one Mac architecture for local testing; publishing requires all.
 
@@ -44,6 +44,9 @@ while [ "$#" -gt 0 ]; do
 done
 [[ "$RUN_ID" =~ ^[0-9]+$ ]] || { echo "Error: --run requires a numeric run ID." >&2; exit 1; }
 [[ "$REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "Error: invalid repository." >&2; exit 1; }
+# Keep the original generic --repo option above for reference; this fork's
+# signed updates must never be uploaded to the upstream or another repository.
+[ "$REPOSITORY" = ruivza/openwhispr ] || { echo "Error: releases are restricted to ruivza/openwhispr." >&2; exit 1; }
 case "$ARCH" in all|arm64|x64) ;; *) echo "Error: invalid architecture." >&2; exit 1 ;; esac
 [ "$PUBLISH" = false ] || [ "$ARCH" = all ] || { echo "Error: publishing requires --arch all." >&2; exit 1; }
 [ "$(uname -s)" = Darwin ] || { echo "Error: run this script on your signing Mac." >&2; exit 1; }
@@ -130,6 +133,12 @@ for arch in "${ARCHS[@]}"; do
     xcrun stapler validate "$APP"
     spctl --assess --type execute --verbose=2 "$APP"
 
+    # The original notarize-$arch.zip above predates stapling and is only an
+    # Apple submission. Squirrel.Mac installs this final signed/stapled ZIP.
+    UPDATE_ZIP="$WORK_DIR/output/OpenWhispr-$VERSION-mac-$arch.zip"
+    ditto -c -k --keepParent "$APP" "$UPDATE_ZIP"
+    python3 "$SCRIPT_DIR/lib/macos-release.py" manifest "$UPDATE_ZIP" "$VERSION" "$arch"
+
     VOLUME="$WORK_DIR/volume-$arch"
     mkdir "$VOLUME"
     ditto "$APP" "$VOLUME/OpenWhispr.app"
@@ -152,14 +161,19 @@ if [ "$PUBLISH" = true ]; then
     [[ "$(gh api "repos/$REPOSITORY/commits/$TAG" --jq .sha)" = "$COMMIT" ]] || {
         echo "Error: remote tag changed during notarization." >&2; exit 1;
     }
-    echo "Publishing signed macOS DMGs and checksums to $REPOSITORY ($TAG)..."
+    # echo "Publishing signed macOS DMGs and checksums to $REPOSITORY ($TAG)..."
+    echo "Publishing signed macOS packages and update metadata to $REPOSITORY ($TAG)..."
     if ! gh release view "$TAG" --repo "$REPOSITORY" >/dev/null 2>&1; then
         # The CI publisher may create the Release concurrently.
         gh release create "$TAG" --repo "$REPOSITORY" --verify-tag \
             --title "OpenWhispr $VERSION" --generate-notes || \
             gh release view "$TAG" --repo "$REPOSITORY" >/dev/null
     fi
-    gh release upload "$TAG" "$WORK_DIR/output/"* --repo "$REPOSITORY"
+    # gh release upload "$TAG" "$WORK_DIR/output/"* --repo "$REPOSITORY"
+    # Metadata is uploaded only after every referenced signed payload exists.
+    gh release upload "$TAG" "$WORK_DIR/output/"*.dmg "$WORK_DIR/output/"*.zip \
+        "$WORK_DIR/output/SHA256SUMS-macos" --repo "$REPOSITORY"
+    gh release upload "$TAG" "$WORK_DIR/output/"*.yml --repo "$REPOSITORY"
 else
     echo "Ready: $WORK_DIR/output"
     echo "Use --publish to upload the signed Mac packages to the version Release."

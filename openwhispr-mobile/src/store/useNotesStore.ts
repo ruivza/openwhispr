@@ -1,6 +1,7 @@
 import { isManagedMeetingAudioUri } from '@/lib/transcriptAudio';
 import { create } from 'zustand';
-import * as Sentry from '@sentry/react-native';
+// import * as Sentry from '@sentry/react-native';
+import { Sentry } from '@/lib/sentry';
 import { notesRepository, spacesRepository } from '@/data';
 import type { Note, Folder, NoteUpdate, Space } from '@/data';
 import type { ConflictedNote, Segment, Speaker, SpeakerProfile } from '@/data/types';

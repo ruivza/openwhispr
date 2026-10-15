@@ -18,12 +18,20 @@ const SECRET_KEYS = [
   "BEDROCK_SESSION_TOKEN",
   "AZURE_OPENAI_API_KEY",
   "VERTEX_API_KEY",
+  "CONNECTOR_GMAIL_CLIENT_SECRET",
 ];
 
 const SECRET_KEY_SET = new Set(SECRET_KEYS);
 
 const PERSISTED_KEYS = [
   ...SECRET_KEYS,
+  "CONNECTOR_SLACK_CLIENT_ID",
+  "CONNECTOR_SLACK_OAUTH_REDIRECT_URI",
+  "CONNECTOR_LINEAR_CLIENT_ID",
+  "CONNECTOR_LINEAR_OAUTH_REDIRECT_URI",
+  "CONNECTOR_GMAIL_CLIENT_ID",
+  "CONNECTOR_GITHUB_APP_CLIENT_ID",
+  "CONNECTOR_GITHUB_APP_SLUG",
   "LOCAL_TRANSCRIPTION_PROVIDER",
   "PARAKEET_MODEL",
   "DICTATION_LANGUAGE",
@@ -232,6 +240,16 @@ class EnvironmentManager {
     // otherwise a partial-migration recovery can lose unencrypted secrets.
     const stripSecrets =
       this._encryptionAvailable() && fs.existsSync(this._getMigrationSentinelPath());
+    // This OAuth secret may be added through .env after the original key
+    // migration. Encrypt it before the next settings save strips plaintext.
+    const gmailSecret = process.env.CONNECTOR_GMAIL_CLIENT_SECRET;
+    if (
+      stripSecrets &&
+      gmailSecret &&
+      !fs.existsSync(this._getSecretFilePath("CONNECTOR_GMAIL_CLIENT_SECRET"))
+    ) {
+      await this._saveSecretKey("CONNECTOR_GMAIL_CLIENT_SECRET", gmailSecret);
+    }
     let envContent = "# OpenWhispr Environment Variables\n";
     for (const key of PERSISTED_KEYS) {
       if (stripSecrets && SECRET_KEY_SET.has(key)) continue;

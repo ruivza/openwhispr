@@ -33,7 +33,8 @@ test("consent: a free account still syncs shared notes and team spaces", async (
 test("consent: sharing survives the cloud-backup toggle being off", async () => {
   const { resolveSyncConsent } = await load();
   const consent = resolveSyncConsent({ ...SIGNED_IN, backupEnabled: false });
-  assert.deepEqual(consent, { shared: true, backup: false, analytics: true });
+  //   assert.deepEqual(consent, { shared: true, backup: false, analytics: true });
+  assert.deepEqual(consent, { shared: true, backup: false, analytics: false });
 });
 
 test("consent: backup needs the plan, the toggle, and org policy together", async () => {
@@ -59,11 +60,12 @@ test("consent: nothing syncs without a validated signed-in session", async () =>
   }
 });
 
-test("consent: Insights counters answer to their own opt-in, not the plan", async () => {
+test("consent: Insights counters stay local despite a saved opt-in and any plan", async () => {
   const { resolveSyncConsent } = await load();
   assert.equal(
     resolveSyncConsent({ ...SIGNED_IN, backupEnabled: false, subscribed: false }).analytics,
-    true
+    // true, // Original cloud opt-in behavior.
+    false
   );
   for (const off of ["insightsSyncEnabled", "backupAllowedByPolicy"]) {
     assert.equal(
@@ -91,22 +93,24 @@ const OFFER = {
   unclaimedCount: 0,
 };
 
-test("claim offer: counters stay offerable once sync is already on", async () => {
+test("claim offer: a legacy opt-in never offers to upload local counters", async () => {
   const { canOfferAnalyticsClaim } = await load();
   // The bug: signed out, dictated, signed back in. Those rows are excluded
   // from the account summary the view then shows, so hiding the offer behind
   // the toggle dropped the visible totals with no way to get them back.
   assert.equal(
     canOfferAnalyticsClaim({ ...OFFER, insightsSyncEnabled: true, unclaimedCount: 2 }),
-    true
+    // true, // Original cloud claim behavior.
+    false
   );
   // Sync on and nothing left behind: there is nothing to ask about.
   assert.equal(canOfferAnalyticsClaim({ ...OFFER, insightsSyncEnabled: true }), false);
 });
 
-test("claim offer: the opt-in prompt still shows before sync is turned on", async () => {
+test("claim offer: no upload prompt is offered with cloud analytics disabled", async () => {
   const { canOfferAnalyticsClaim } = await load();
-  assert.equal(canOfferAnalyticsClaim(OFFER), true);
+  //   assert.equal(canOfferAnalyticsClaim(OFFER), true);
+  assert.equal(canOfferAnalyticsClaim(OFFER), false);
   for (const off of ["signedIn", "syncAllowedByPolicy", "dataRetentionEnabled"]) {
     assert.equal(canOfferAnalyticsClaim({ ...OFFER, [off]: false }), false, `${off} off`);
     assert.equal(

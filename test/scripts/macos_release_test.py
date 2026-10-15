@@ -1,5 +1,7 @@
 """Release input validation and Electron signing order, without signing credentials."""
 
+import base64
+import hashlib
 import importlib.util
 import io
 import json
@@ -146,6 +148,32 @@ class SigningTests(unittest.TestCase):
             self.assertNotIn(framework_exe, plan)
             with self.assertRaisesRegex(ValueError, "version"):
                 release.signing_plan(app, "9.9.9")
+
+
+class UpdateManifestTests(unittest.TestCase):
+    def test_each_architecture_describes_the_final_zip_bytes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for arch in ("arm64", "x64"):
+                archive = root / f"OpenWhispr-{VERSION}-mac-{arch}.zip"
+                archive.write_bytes(b"final signed and stapled app zip " + arch.encode())
+                manifest = release.write_update_manifest(archive, VERSION, arch)
+                self.assertEqual(manifest.name, f"latest-{arch}-mac.yml")
+                info = json.loads(manifest.read_text())
+                expected = base64.b64encode(hashlib.sha512(archive.read_bytes()).digest()).decode()
+                self.assertEqual(info["version"], VERSION)
+                self.assertEqual(info["files"], [{"url": archive.name, "sha512": expected, "size": archive.stat().st_size}])
+                self.assertEqual(info["path"], archive.name)
+                self.assertEqual(info["sha512"], expected)
+
+    def test_unsigned_or_wrong_architecture_archive_names_are_refused(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for name in ("notarize-arm64.zip", f"OpenWhispr-{VERSION}-mac-x64.zip", f"OpenWhispr-{VERSION}-mac-arm64.dmg"):
+                archive = root / name
+                archive.write_bytes(b"not the final update zip")
+                with self.subTest(name=name), self.assertRaisesRegex(ValueError, "final versioned"):
+                    release.write_update_manifest(archive, VERSION, "arm64")
 
 
 if __name__ == "__main__":

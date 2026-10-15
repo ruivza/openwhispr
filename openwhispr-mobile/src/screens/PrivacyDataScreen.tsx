@@ -3,7 +3,7 @@ import { SettingsRow, SettingsSection } from '@/components/ui/SettingsSection';
 import { SettingsScreen } from '@/components/ui/SettingsScreen';
 import { SettingsSwitch } from '@/components/ui/SettingsSwitch';
 import { useConfigStore } from '@/store/useConfigStore';
-import { useConfigToggle } from '@/hooks/useConfigToggle';
+// import { useConfigToggle } from '@/hooks/useConfigToggle';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useNotesStore } from '@/store/useNotesStore';
 import { useUsageStore } from '@/store/useUsageStore';
@@ -45,7 +45,8 @@ export default function PrivacyDataScreen() {
   const loadVoiceProfiles = useNotesStore((s) => s.loadVoiceProfiles);
   const deleteAllVoiceProfiles = useNotesStore((s) => s.deleteAllVoiceProfiles);
   const cloudBackupEnabled = config?.cloudBackupEnabled ?? true;
-  const usageAnalytics = config?.usageAnalyticsEnabled ?? true;
+  // Telemetry is disabled regardless of the saved preference.
+  // const usageAnalytics = config?.usageAnalyticsEnabled ?? true;
   const signedIn = !!user && !isGuest;
   const paidPlanRequired = usage ? !usage.isSubscribed : subscriptionRequired;
 
@@ -77,7 +78,7 @@ export default function PrivacyDataScreen() {
     [updateConfig],
   );
 
-  const handleToggleAnalytics = useConfigToggle('usageAnalyticsEnabled');
+  // const handleToggleAnalytics = useConfigToggle('usageAnalyticsEnabled');
   const handleDeleteVoiceProfiles = useCallback(() => {
     confirmDestructive(
       'Delete Voice Profiles',
@@ -100,6 +101,7 @@ export default function PrivacyDataScreen() {
 
   return (
     <SettingsScreen>
+      {/* Official hosted backup disabled; original controls retained.
       <SettingsSection title="Sync">
         <SettingsRow
           iconStyle="line"
@@ -113,8 +115,10 @@ export default function PrivacyDataScreen() {
           showChevron={false}
         />
       </SettingsSection>
+      */}
 
       <SettingsSection title="Data">
+        {/* Telemetry control disabled; original UI retained.
         <SettingsRow
           iconStyle="line"
           icon="chart.bar"
@@ -126,12 +130,14 @@ export default function PrivacyDataScreen() {
           }
           showChevron={false}
         />
+        */}
         <SettingsRow
           iconStyle="line"
           icon="text.cursor"
           mdIcon="TextCursor"
           title="Voice Assistant Context"
-          description="Selected text is always sent to the cloud service when you use the Voice Assistant. If Share Cursor Context is on, the surrounding text near your cursor is also sent. This setting is off by default and can be changed in Voice Assistant settings."
+          // description="Selected text is always sent to the cloud service when you use the Voice Assistant. If Share Cursor Context is on, the surrounding text near your cursor is also sent. This setting is off by default and can be changed in Voice Assistant settings."
+          description="Voice Assistant text is sent to the provider you configure in AI Models. Share Cursor Context also includes surrounding text when you turn it on."
           showChevron={false}
         />
         <SettingsRow

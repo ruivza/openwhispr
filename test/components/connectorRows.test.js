@@ -94,7 +94,7 @@ test("a row's connecting detail shows only while Connect is in progress", async 
     root.render(
       React.createElement(ConnectorLoginRow, {
         row,
-        isPaid: true,
+        available: true,
         blockedByOrg: false,
       })
     )

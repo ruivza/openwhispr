@@ -1,7 +1,8 @@
 const { resolveTarget } = require("./targetResolution");
 const { isValidEmailAddress } = require("./emailCompose");
 const { createSlackApi } = require("./slackApi");
-const { createSlackAuth } = require("./slackAuth");
+const { createSlackAuth, slackRedirectUri } = require("./slackAuth");
+const { configuredString } = require("./localOAuthConfig");
 const { createSlackDirectory } = require("./slackDirectory");
 const { connectorResultPage } = require("./oauthResultPage");
 
@@ -196,8 +197,17 @@ function createSlackConnector({ api, auth, directory, credentials }) {
     async getStatus() {
       const entry = credentials.read(credentials.activeAccountId(), "slack");
       return entry
-        ? auth.statusOf(entry.credential)
-        : { connected: false, accountLabel: null, workspaceLabel: null, needsReconnect: false };
+        ? { ...auth.statusOf(entry.credential), configured: true }
+        : {
+            connected: false,
+            configured: auth.isConfigured?.() ?? false,
+            accountLabel: null,
+            workspaceLabel: null,
+            needsReconnect: false,
+          };
+      // return entry
+      //   ? auth.statusOf(entry.credential)
+      //   : { connected: false, accountLabel: null, workspaceLabel: null, needsReconnect: false };
     },
 
     async getBinding() {
@@ -357,7 +367,9 @@ function buildSlackConnector(deps) {
   const auth = createSlackAuth({
     api,
     credentials: deps.credentials,
-    getClientId: () => deps.env.SLACK_CLIENT_ID,
+    getClientId: () => configuredString(deps.env?.CONNECTOR_SLACK_CLIENT_ID),
+    getRedirectUri: () => slackRedirectUri(deps.env),
+    // getClientId: () => deps.env.SLACK_CLIENT_ID,
     runOAuthLoopbackFlow: deps.runOAuthLoopbackFlow,
     OAuthFlowError: deps.OAuthFlowError,
     renderResultPage: connectorResultPage(deps, "slack"),

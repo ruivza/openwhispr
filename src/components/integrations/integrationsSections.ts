@@ -1,5 +1,6 @@
 import type { ComponentType } from "react";
 import { Calendar, Key, Link2, Network, Terminal } from "../icons";
+import forkConfig from "../../config/fork.json";
 
 export type IntegrationsSection = "connectors" | "calendars" | "api" | "mcp" | "cli";
 
@@ -11,7 +12,12 @@ export const INTEGRATIONS_SECTION_GROUPS: ReadonlyArray<{
 }> = [
   { id: "meetings", sections: ["calendars"] },
   { id: "assistant", sections: ["connectors"] },
-  { id: "developer", sections: ["api", "mcp", "cli"] },
+  // Original official API/MCP entries: { id: "developer", sections: ["api", "mcp", "cli"] }.
+  // Before local MCP: { id: "developer", sections: forkConfig.hostedServicesEnabled ? ["api", "mcp", "cli"] : ["cli"] }.
+  {
+    id: "developer",
+    sections: forkConfig.hostedServicesEnabled ? ["api", "mcp", "cli"] : ["mcp", "cli"],
+  },
 ];
 
 export const INTEGRATIONS_SECTION_ICONS: Record<
@@ -31,7 +37,8 @@ export type SectionMeta =
 export interface SectionMetaInput {
   isPaid: boolean;
   /** Connectors decide their plan and org policy as the Connectors pane does. */
-  connectors: { isPaid: boolean; blockedByOrg: boolean; ready: number };
+  // connectors: { isPaid: boolean; blockedByOrg: boolean; ready: number };
+  connectors: { available: boolean; blockedByOrg: boolean; ready: number };
   connectedCalendars: number;
 }
 
@@ -44,13 +51,17 @@ export function sectionMeta(
     case "connectors":
       // Turned off by the organization: no plan would change that, and no login can act.
       if (connectors.blockedByOrg) return null;
-      if (!connectors.isPaid) return { kind: "badge", badge: "pro" };
+      // if (!connectors.isPaid) return { kind: "badge", badge: "pro" };
+      if (!connectors.available) return null;
       return connectors.ready > 0 ? { kind: "count", value: connectors.ready } : null;
     case "calendars":
       return connectedCalendars > 0 ? { kind: "count", value: connectedCalendars } : null;
     case "api":
-    case "mcp":
       return isPaid ? null : { kind: "badge", badge: "pro" };
+    case "mcp":
+      // The hosted MCP entry used the same paid badge as API access.
+      // return isPaid ? null : { kind: "badge", badge: "pro" };
+      return null;
     case "cli":
       // Local mode is free; saying so is the point of surfacing it to free plans.
       return isPaid ? null : { kind: "badge", badge: "free" };

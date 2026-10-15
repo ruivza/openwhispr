@@ -75,7 +75,8 @@ test("technical output values remain LTR inside an Arabic document", () => {
     ],
     ["src/components/ui/TechnicalErrorDetails.tsx", /<pre\s+dir="ltr"[\s\S]*?\{text\}/],
     ["src/components/ui/NixOsPasteInfo.tsx", /<div\s+dir="ltr"[\s\S]*?<pre/],
-    ["src/components/integrations/McpPane.tsx", /<CopyableCommand\s+command=\{MCP_URL\}/],
+    // Hosted MCP used command={MCP_URL}.
+    ["src/components/integrations/McpPane.tsx", /<CopyableCommand\s+command=\{config\}/],
     ["src/components/ui/CopyableCommand.tsx", /<div\s+dir="ltr"[\s\S]*?\{command\}/],
     [
       "src/components/settings/WorkspaceBillingCard.tsx",

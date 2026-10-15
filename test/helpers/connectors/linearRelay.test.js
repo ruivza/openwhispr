@@ -10,7 +10,8 @@ const {
   memoryCredentials,
 } = require("./linearFixtures");
 
-const RELAY = "https://openwhispr.com/auth/linear/callback";
+// const RELAY = "https://openwhispr.com/auth/linear/callback";
+const RELAY = "https://relay.example.test/linear/callback";
 const silentLogger = { info() {}, warn() {}, error() {} };
 
 // The real loopback flow, with Electron's shell replaced so opening the
@@ -23,7 +24,12 @@ function loadLoopback(opened) {
   for (const path of paths) delete require.cache[path];
   const originalLoad = Module._load;
   Module._load = function loadWithElectronMock(request, parent, isMain) {
-    if (request === "electron") return { shell: { openExternal: async (url) => opened.push(url) } };
+    if (request === "electron")
+      return {
+        app: { isPackaged: false, isReady: () => false },
+        shell: { openExternal: async (url) => opened.push(url) },
+      };
+    // if (request === "electron") return { shell: { openExternal: async (url) => opened.push(url) } };
     return originalLoad.call(this, request, parent, isMain);
   };
   try {
@@ -43,7 +49,7 @@ function connectorDeps(overrides = {}) {
     OAuthFlowError: FakeFlowError,
     credentials: memoryCredentials(null, { connectorId: "linear" }),
     logger: silentLogger,
-    env: { LINEAR_CLIENT_ID: "client-1" },
+    env: { CONNECTOR_LINEAR_CLIENT_ID: "client-1", CONNECTOR_LINEAR_OAUTH_REDIRECT_URI: RELAY },
     openExternal: async () => {},
     writeClipboard: () => {},
     getGoogleCalendarAccounts: () => [],
@@ -73,20 +79,27 @@ async function until(read) {
   throw new Error("timed out waiting");
 }
 
-test("the relay URL is openwhispr.com's, and only an https override replaces it", async () => {
+test("no official relay is selected without an explicit self-owned https URL", async () => {
   const { linearRedirectUri, LINEAR_RELAY_REDIRECT_URI } =
     await import("../../../src/helpers/connectors/linearAuth.js");
-  assert.equal(LINEAR_RELAY_REDIRECT_URI, RELAY);
-  assert.equal(linearRedirectUri({}), RELAY);
-  assert.equal(linearRedirectUri(undefined), RELAY);
+  // assert.equal(LINEAR_RELAY_REDIRECT_URI, RELAY);
+  assert.equal(LINEAR_RELAY_REDIRECT_URI, null);
+  // assert.equal(linearRedirectUri({}), RELAY);
+  assert.equal(linearRedirectUri({}), null);
+  // assert.equal(linearRedirectUri(undefined), RELAY);
+  assert.equal(linearRedirectUri(undefined), null);
   assert.equal(
     linearRedirectUri({
-      LINEAR_OAUTH_REDIRECT_URI: "https://preview.openwhispr.test/auth/linear/callback",
+      CONNECTOR_LINEAR_OAUTH_REDIRECT_URI: "https://preview.openwhispr.test/auth/linear/callback",
     }),
     "https://preview.openwhispr.test/auth/linear/callback"
   );
   for (const override of ["http://openwhispr.test/auth/linear/callback", "not a url", ""]) {
-    assert.equal(linearRedirectUri({ LINEAR_OAUTH_REDIRECT_URI: override }), RELAY, override);
+    assert.equal(
+      linearRedirectUri({ CONNECTOR_LINEAR_OAUTH_REDIRECT_URI: override }),
+      null,
+      override
+    );
   }
 });
 

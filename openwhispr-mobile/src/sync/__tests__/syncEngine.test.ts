@@ -1,3 +1,5 @@
+// Business tests spy on the local diagnostic adapter; its no-op behavior is tested separately.
+jest.mock('@/lib/sentry', () => ({ Sentry: jest.requireMock('@sentry/react-native') }));
 jest.mock('../privateNoteDeletion', () => ({
   pushPrivateNoteDeletes: jest.fn(),
   clearPrivateNoteDeletionQueue: jest.fn(),
@@ -134,7 +136,8 @@ import { pushPrivateNoteDeletes } from '../privateNoteDeletion';
 import { useSyncStore } from '../useSyncStore';
 import { ApiError } from '@/lib/apiClient';
 import { notesRepository } from '@/data';
-import * as Sentry from '@sentry/react-native';
+// import * as Sentry from '@sentry/react-native';
+import { Sentry } from '@/lib/sentry';
 
 // Flushes the microtask queue (via a macrotask boundary) enough times to
 // drain runSyncNow's long await chain — requestSync doesn't return the

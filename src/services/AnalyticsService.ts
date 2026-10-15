@@ -37,6 +37,8 @@ export function subscribeToAnalyticsRefresh(
   refresh: () => void | Promise<void>,
   cloudInsightsActive: boolean
 ): () => void {
+  // Cloud polling is disabled; local analytics-changed refreshes still run.
+  cloudInsightsActive = false;
   let disposed = false;
   let refreshRunning = false;
   let trailingLocalRefreshRequested = false;
@@ -196,12 +198,15 @@ interface AnalyticsSyncOptions {
 }
 
 export function syncPendingAnalytics(options: AnalyticsSyncOptions = {}): Promise<number> {
-  const pass = passQueue.then(
-    () => runAnalyticsPass(options),
-    () => runAnalyticsPass(options)
-  );
-  passQueue = pass.catch(() => {});
-  return pass;
+  // Keep counters and queued erasures untouched; telemetry removal must not
+  // upload events or delete existing account history.
+  return Promise.resolve(0);
+  // const pass = passQueue.then(
+  //   () => runAnalyticsPass(options),
+  //   () => runAnalyticsPass(options)
+  // );
+  // passQueue = pass.catch(() => {});
+  // return pass;
 }
 
 async function runAnalyticsPass({
@@ -347,35 +352,38 @@ function isAnalyticsSummary(value: unknown): value is AnalyticsSummary {
 export async function getAccountAnalyticsSummary(
   accountId: string | null = null
 ): Promise<AnalyticsSummary> {
-  const requestHistoryBackfill = Boolean(
-    accountId && !requestedHistoryBackfillAccounts.has(accountId)
-  );
-  if (requestHistoryBackfill && accountId) requestedHistoryBackfillAccounts.add(accountId);
-  const params = new URLSearchParams({
-    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-  });
-  if (requestHistoryBackfill) params.set("backfill", "true");
-
-  let summary: unknown;
-  try {
-    summary = await cloudGet<unknown>(`/api/analytics/summary?${params}`);
-  } catch (error) {
-    // A transient first request must not permanently suppress reconciliation.
-    // The Set is claimed before I/O so overlapping refreshes still collapse to
-    // one trigger for this account and renderer process.
-    if (requestHistoryBackfill && accountId) requestedHistoryBackfillAccounts.delete(accountId);
-    throw error;
-  }
-  // The cloud is an untrusted JSON boundary. Invalid buckets crash Heatmap
-  // during render, outside the caller's async fallback, so validate the whole
-  // shape before any part of it reaches component state. A successful request
-  // already triggered history reconciliation; malformed presentation data
-  // must not start another continuation chain on the next refresh.
-  if (!isAnalyticsSummary(summary)) {
-    throw new Error("Malformed analytics summary from cloud");
-  }
-  if (requestHistoryBackfill && accountId && summary.historyBackfillRetryRequired === true) {
-    requestedHistoryBackfillAccounts.delete(accountId);
-  }
-  return summary;
+  // Stay device-scoped and avoid the cloud summary's history-backfill side effect.
+  return window.electronAPI.getAnalyticsSummary();
+  //
+  //   const requestHistoryBackfill = Boolean(
+  //     accountId && !requestedHistoryBackfillAccounts.has(accountId)
+  //   );
+  //   if (requestHistoryBackfill && accountId) requestedHistoryBackfillAccounts.add(accountId);
+  //   const params = new URLSearchParams({
+  //     timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+  //   });
+  //   if (requestHistoryBackfill) params.set("backfill", "true");
+  //
+  //   let summary: unknown;
+  //   try {
+  //     summary = await cloudGet<unknown>(`/api/analytics/summary?${params}`);
+  //   } catch (error) {
+  //     // A transient first request must not permanently suppress reconciliation.
+  //     // The Set is claimed before I/O so overlapping refreshes still collapse to
+  //     // one trigger for this account and renderer process.
+  //     if (requestHistoryBackfill && accountId) requestedHistoryBackfillAccounts.delete(accountId);
+  //     throw error;
+  //   }
+  //   // The cloud is an untrusted JSON boundary. Invalid buckets crash Heatmap
+  //   // during render, outside the caller's async fallback, so validate the whole
+  //   // shape before any part of it reaches component state. A successful request
+  //   // already triggered history reconciliation; malformed presentation data
+  //   // must not start another continuation chain on the next refresh.
+  //   if (!isAnalyticsSummary(summary)) {
+  //     throw new Error("Malformed analytics summary from cloud");
+  //   }
+  //   if (requestHistoryBackfill && accountId && summary.historyBackfillRetryRequired === true) {
+  //     requestedHistoryBackfillAccounts.delete(accountId);
+  //   }
+  //   return summary;
 }

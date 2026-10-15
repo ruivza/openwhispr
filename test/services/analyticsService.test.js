@@ -1,6 +1,46 @@
-const test = require("node:test");
+const nodeTest = require("node:test");
 const assert = require("node:assert/strict");
 const { createRendererServer, installBrowserGlobals } = require("../lib/rendererTestHarness");
+
+// Original cloud regressions remain registered with an explicit skip reason.
+const disabledCloudCases = new Set([
+  "analytics deletion tombstones reach the cloud before pending uploads",
+  "a failed cloud deletion preserves its tombstone without blocking uploads",
+  "a delete-only pass clears cloud tombstones without enabling uploads",
+  "an account clear reaches the cloud before newer analytics upload",
+  "a failed account clear stays pending without stalling the rest of the pass",
+  "account analytics accepts a complete cloud summary",
+  "account analytics sends UTC when the runtime exposes no timezone",
+  "account analytics requests history once per account and not on ordinary refreshes",
+  "account analytics retries the history trigger after a failed request",
+  "account analytics retries the history trigger when queue scheduling is unavailable",
+  "a malformed successful summary does not retrigger server history",
+  "analytics refreshes locally on change and remotely only while cloud Insights are active",
+  "analytics drops remote-only trailing work when the view becomes hidden",
+  "overlapping passes are serialized rather than posting the same batch twice",
+  "a queued analytics pass resolves its upload gate only when it starts",
+  "revoking upload consent stops a multi-batch drain after its active request",
+  "a history backlog is capped per pass and drains across later passes",
+  "analytics queue and cloud operations carry one pinned account context",
+  "a withheld row is offered once per pass, not once per batch behind it",
+  "rejected version-zero history survives an API rollback and syncs after recovery",
+  "an API without version-zero support is not re-asked on every pass",
+  "live events keep uploading while history is backing off",
+  "a capable API can permanently retire invalid version-zero history",
+  "account analytics rejects a cloud summary with a null bucket",
+  "account analytics rejects a cloud summary with an impossible date",
+  "account analytics rejects a cloud summary with non-numeric words",
+  "account analytics rejects a cloud summary with negative dictations",
+  "account analytics rejects a cloud summary with a non-numeric duration",
+]);
+const test = (name, run) =>
+  disabledCloudCases.has(name)
+    ? nodeTest(
+        name,
+        { skip: "Cloud analytics network behavior is disabled; original regression retained." },
+        run
+      )
+    : nodeTest(name, run);
 
 const EVENT = {
   event_id: "upload-after-delete",
@@ -563,7 +603,7 @@ test("analytics refreshes locally on change and remotely only while cloud Insigh
   assert.deepEqual(clearedIntervals, [1]);
 });
 
-test("analytics refresh does not install cloud triggers while account sync is inactive", async (t) => {
+test("analytics refresh stays local even when a legacy cloud preference is true", async (t) => {
   const windowListeners = new Map();
   const documentListeners = new Map();
   let intervalCount = 0;
@@ -594,7 +634,7 @@ test("analytics refresh does not install cloud triggers while account sync is in
   let refreshes = 0;
   const dispose = subscribeToAnalyticsRefresh(() => {
     refreshes += 1;
-  }, false);
+  }, true); // Original call passed false; legacy true must also stay local.
 
   assert.equal(windowListeners.size, 0);
   assert.equal(documentListeners.size, 0);
@@ -1149,4 +1189,69 @@ test("a capable API can permanently retire invalid version-zero history", async 
 
   assert.equal(await syncPendingAnalytics(), 1);
   assert.equal(retired.has(event.event_id), true);
+});
+
+test("disabled analytics never reads pending rows, uploads, or erases cloud history", async (t) => {
+  const calls = [];
+  installBrowserGlobals(t, {
+    initialStorage: {
+      isSignedIn: "true",
+      insightsSyncEnabled: "true",
+      telemetryEnabled: "true",
+      dataRetentionEnabled: "true",
+    },
+    window: {
+      electronAPI: new Proxy(
+        {},
+        {
+          get: (_target, method) => async () => {
+            calls.push(method);
+            throw new Error(`Analytics must not invoke ${String(method)}`);
+          },
+        }
+      ),
+    },
+  });
+  const vite = await createRendererServer(t);
+  const { syncPendingAnalytics } = await vite.ssrLoadModule("/services/AnalyticsService.ts");
+  const context = { accountId: "legacy-account", authGeneration: 7 };
+  const gate = () => {
+    calls.push("uploadAllowed");
+    return true;
+  };
+  assert.deepEqual(
+    await Promise.all([
+      syncPendingAnalytics(),
+      syncPendingAnalytics({ uploadAllowed: true, context }),
+      syncPendingAnalytics({ uploadAllowed: false, context }),
+      syncPendingAnalytics({ uploadAllowed: gate, context }),
+    ]),
+    [0, 0, 0, 0]
+  );
+  assert.deepEqual(calls, [], "neither uploads nor queued cloud deletions run");
+});
+
+test("account summary reads preserved local counters without a cloud backfill request", async (t) => {
+  let localReads = 0;
+  const requests = [];
+  installBrowserGlobals(t, {
+    window: {
+      electronAPI: {
+        getAnalyticsSummary: async () => {
+          localReads += 1;
+          return VALID_SUMMARY;
+        },
+        cloudApiRequest: async (request) => {
+          requests.push(request);
+          throw new Error("Cloud analytics requests are disabled");
+        },
+      },
+    },
+  });
+  const vite = await createRendererServer(t);
+  const { getAccountAnalyticsSummary } = await vite.ssrLoadModule("/services/AnalyticsService.ts");
+  assert.deepEqual(await getAccountAnalyticsSummary("legacy-account"), VALID_SUMMARY);
+  assert.deepEqual(await getAccountAnalyticsSummary("other-account"), VALID_SUMMARY);
+  assert.equal(localReads, 2);
+  assert.deepEqual(requests, []);
 });

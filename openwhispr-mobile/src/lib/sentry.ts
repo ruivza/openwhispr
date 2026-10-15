@@ -1,3 +1,17 @@
+// Telemetry disabled in this build. Original implementation retained below.
+// Do not import the SDK: configured DSNs and saved preferences cannot start capture.
+export function initSentry(): void {
+  return;
+}
+
+export const Sentry = Object.freeze({
+  captureException: (..._args: unknown[]): string => '',
+  captureMessage: (..._args: unknown[]): string => '',
+  addBreadcrumb: (..._args: unknown[]): void => undefined,
+  wrap: <T>(component: T): T => component,
+});
+
+/*
 import * as Sentry from '@sentry/react-native';
 import { useConfigStore } from '@/store/useConfigStore';
 
@@ -67,3 +81,4 @@ export function initSentry(): void {
 }
 
 export { Sentry };
+*/

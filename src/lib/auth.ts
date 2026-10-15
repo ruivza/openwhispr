@@ -1,4 +1,5 @@
 import { createAuthClient } from "better-auth/react";
+import fork from "../config/fork.json";
 import { ssoClient } from "@better-auth/sso/client";
 import { openExternalLink } from "../utils/externalLinks";
 import {
@@ -16,7 +17,14 @@ export const authClient = createAuthClient({
   plugins: [ssoClient()],
   fetchOptions: {
     credentials: "omit",
-    customFetchImpl: authContextFetch,
+    // customFetchImpl: authContextFetch,
+    customFetchImpl: fork.officialAccountEnabled
+      ? authContextFetch
+      : async () =>
+          Response.json(
+            { code: "ACCOUNT_DISABLED", message: "Hosted accounts are disabled" },
+            { status: 403 }
+          ),
     headers: { "x-openwhispr-source": "desktop" },
     onRequest: prepareAuthRequest,
     onResponse: handleAuthRequestResponse,
@@ -178,6 +186,10 @@ export async function withSessionRefresh<T>(operation: () => Promise<T>): Promis
 const DESKTOP_OAUTH_CALLBACK_URL = "https://openwhispr.com/auth/desktop-callback";
 
 export async function signInWithSocial(provider: SocialProvider): Promise<{ error?: Error }> {
+  if (!fork.officialAccountEnabled)
+    return {
+      error: Object.assign(new Error("Hosted accounts are disabled"), { code: "ACCOUNT_DISABLED" }),
+    };
   try {
     const isElectron = Boolean((window as any).electronAPI);
 
@@ -202,6 +214,10 @@ export async function signInWithSocial(provider: SocialProvider): Promise<{ erro
 }
 
 export async function signInWithSSO(email: string): Promise<{ error?: Error }> {
+  if (!fork.officialAccountEnabled)
+    return {
+      error: Object.assign(new Error("Hosted accounts are disabled"), { code: "ACCOUNT_DISABLED" }),
+    };
   try {
     const isElectron = Boolean((window as any).electronAPI);
 
@@ -293,6 +309,7 @@ export const ADMIN_URL = import.meta.env.VITE_ADMIN_URL || "https://admin.openwh
  * reason, fall back to the bare console URL and let the user sign in there.
  */
 export async function openAdminConsole(): Promise<void> {
+  if (!fork.officialAccountEnabled) return;
   let url = ADMIN_URL;
   try {
     // The generated $fetch types don't discriminate on `throw`, and the

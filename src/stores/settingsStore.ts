@@ -61,6 +61,8 @@ import type {
 import type { Snippet } from "../utils/snippets";
 import type { EnterpriseSetupMode } from "../types/enterpriseIdentity";
 import { getManagedScopeResolution } from "./enterpriseIdentityStore";
+import forkConfig from "../config/fork.json";
+import { getForkSettingsPatch } from "./forkSettings";
 
 let _ReasoningService: typeof import("../services/ReasoningService").default | null = null;
 
@@ -197,7 +199,13 @@ function readScopedLocalProvider(scopeKey: string): LocalTranscriptionProvider {
   return readLocalProvider(scopeKey);
 }
 
+const isDisabledTelemetrySetting = (key: string) =>
+  key === "insightsSyncEnabled" || key === "telemetryEnabled";
+
 function readBoolean(key: string, fallback: boolean): boolean {
+  // Ignore legacy opt-ins while retaining their stored values and local history.
+  if (isDisabledTelemetrySetting(key)) return false;
+  if (key === "isSignedIn" && !forkConfig.officialAccountEnabled) return false;
   if (!isBrowser) return fallback;
   const stored = localStorage.getItem(key);
   if (stored === null) return fallback;
@@ -1294,6 +1302,7 @@ export function setStringSetting(key: keyof SettingsState, value: string): void 
 
 function createBooleanSetter(key: string) {
   return (value: boolean) => {
+    if (isDisabledTelemetrySetting(key)) value = false;
     if (isBrowser) localStorage.setItem(key, String(value));
     useSettingsStore.setState({ [key]: value });
   };
@@ -1707,7 +1716,15 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
 
   transcriptionMode: (() => {
     const v = readString("transcriptionMode", "openwhispr");
-    if (v === "openwhispr" || v === "providers" || v === "local" || v === "self-hosted") return v;
+    // Original accepted modes omitted an existing manual enterprise selection.
+    if (
+      v === "openwhispr" ||
+      v === "providers" ||
+      v === "local" ||
+      v === "self-hosted" ||
+      v === "enterprise"
+    )
+      return v;
     return "openwhispr" as InferenceMode;
   })(),
   remoteTranscriptionType: (() => {
@@ -1753,7 +1770,14 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
 
   uploadTranscriptionMode: (() => {
     const v = readString("uploadTranscriptionMode", "openwhispr");
-    if (v === "openwhispr" || v === "providers" || v === "local" || v === "self-hosted") return v;
+    if (
+      v === "openwhispr" ||
+      v === "providers" ||
+      v === "local" ||
+      v === "self-hosted" ||
+      v === "enterprise"
+    )
+      return v;
     return "openwhispr" as InferenceMode;
   })(),
   uploadUseLocalWhisper: readBoolean("uploadUseLocalWhisper", false),
@@ -2548,6 +2572,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   setNoteFilesPath: createStringSetter("noteFilesPath"),
 
   setIsSignedIn: (value: boolean) => {
+    if (!forkConfig.officialAccountEnabled) value = false;
     if (isBrowser) localStorage.setItem("isSignedIn", String(value));
     set({ isSignedIn: value });
   },
@@ -2722,6 +2747,10 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       s.setChatAgentCloudMode(settings.chatAgentCloudMode);
   },
 }));
+
+// Keep the original defaults above intact. This build starts on local routes and
+// ignores legacy official-account state without erasing saved account preferences.
+useSettingsStore.setState(getForkSettingsPatch(useSettingsStore.getState()));
 
 // --- Selectors (derived state, not stored) ---
 
@@ -3746,6 +3775,13 @@ export async function initializeSettings(): Promise<void> {
     if (!event.key || event.storageArea !== localStorage || event.newValue === null) return;
 
     const { key, newValue } = event;
+    if (
+      isDisabledTelemetrySetting(key) ||
+      (key === "isSignedIn" && !forkConfig.officialAccountEnabled)
+    ) {
+      useSettingsStore.setState({ [key]: false });
+      return;
+    }
 
     if (key.startsWith("customPrompt.")) {
       const kind = key.slice("customPrompt.".length) as PromptKind;
@@ -3816,6 +3852,13 @@ export async function initializeSettings(): Promise<void> {
 
   // Sync settings pushed from main process (e.g., hotkey changed in control panel)
   window.electronAPI?.onSettingUpdated?.((data: { key: string; value: unknown }) => {
+    if (
+      isDisabledTelemetrySetting(data.key) ||
+      (data.key === "isSignedIn" && !forkConfig.officialAccountEnabled)
+    ) {
+      useSettingsStore.setState({ [data.key]: false });
+      return;
+    }
     const state = useSettingsStore.getState();
     if (
       data.key in state &&

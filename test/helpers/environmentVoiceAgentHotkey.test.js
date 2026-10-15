@@ -23,7 +23,7 @@ function restoreEnvironment(snapshot) {
   }
 }
 
-function loadEnvironmentManager(t, userDataDirectory) {
+function loadEnvironmentManager(t, userDataDirectory, secretCrypto = { isAvailable: () => false }) {
   const environmentPath = require.resolve("../../src/helpers/environment");
   const originalEnvironmentModule = require.cache[environmentPath];
   const originalLoad = Module._load;
@@ -40,7 +40,7 @@ function loadEnvironmentManager(t, userDataDirectory) {
         safeStorage: { isEncryptionAvailable: () => false },
       };
     }
-    if (request === "./secretCrypto") return { isAvailable: () => false };
+    if (request === "./secretCrypto") return secretCrypto;
     return originalLoad.call(this, request, parent, isMain);
   };
 
@@ -145,4 +145,42 @@ test("device cleanup clears persisted settings and encrypted secret files", asyn
   assert.equal(process.env.START_MINIMIZED, undefined);
   assert.equal(fs.existsSync(path.join(userDataDirectory, ".env")), false);
   assert.equal(fs.existsSync(secureKeysDirectory), false);
+});
+
+test("saving settings preserves a newly configured connector secret after the old key migration", async (t) => {
+  const userDataDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "openwhispr-connector-config-"));
+  const previousSecret = process.env.CONNECTOR_GMAIL_CLIENT_SECRET;
+  const originalResourcesPath = process.resourcesPath;
+  process.resourcesPath = userDataDirectory;
+  process.env.CONNECTOR_GMAIL_CLIENT_SECRET = "synthetic-gmail-secret";
+  t.after(() => {
+    if (previousSecret === undefined) delete process.env.CONNECTOR_GMAIL_CLIENT_SECRET;
+    else process.env.CONNECTOR_GMAIL_CLIENT_SECRET = previousSecret;
+    process.resourcesPath = originalResourcesPath;
+    fs.rmSync(userDataDirectory, { recursive: true, force: true });
+  });
+  installDotenvStub(t);
+  const EnvironmentManager = loadEnvironmentManager(t, userDataDirectory, {
+    isAvailable: () => true,
+    encrypt: (value) => Buffer.from(`encrypted:${value}`),
+    decrypt: (value) => ({
+      value: value.toString().slice("encrypted:".length),
+      needsReencrypt: false,
+    }),
+  });
+  const manager = new EnvironmentManager();
+  fs.mkdirSync(manager._getSecureKeysDir(), { recursive: true });
+  fs.writeFileSync(manager._getMigrationSentinelPath(), "");
+  await manager.saveAllKeysToEnvFile();
+  assert.doesNotMatch(
+    fs.readFileSync(path.join(userDataDirectory, ".env"), "utf8"),
+    /CONNECTOR_GMAIL_CLIENT_SECRET=/
+  );
+  assert.equal(
+    fs.readFileSync(manager._getSecretFilePath("CONNECTOR_GMAIL_CLIENT_SECRET"), "utf8"),
+    "encrypted:synthetic-gmail-secret"
+  );
+  delete process.env.CONNECTOR_GMAIL_CLIENT_SECRET;
+  await manager._loadSecretKey("CONNECTOR_GMAIL_CLIENT_SECRET");
+  assert.equal(process.env.CONNECTOR_GMAIL_CLIENT_SECRET, "synthetic-gmail-secret");
 });

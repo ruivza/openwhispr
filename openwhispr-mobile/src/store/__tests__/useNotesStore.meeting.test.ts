@@ -1,3 +1,5 @@
+// Business tests spy on the local diagnostic adapter; its no-op behavior is tested separately.
+jest.mock('@/lib/sentry', () => ({ Sentry: jest.requireMock('@sentry/react-native') }));
 jest.mock('expo-file-system/legacy', () => ({ documentDirectory: 'file:///app/documents/' }));
 const mockProcessMeeting = jest.fn();
 const mockGetDiarizer = jest.fn();
@@ -123,7 +125,8 @@ import { generateLocalMeetingNotes } from '@/lib/notes/localMeetingNotes';
 import * as localReasoning from '@/lib/localReasoning';
 import type { Speaker } from '@/data/types';
 import { SpeakerProfileOwnerAlreadyExistsError } from '@/data/local/notesRepository';
-import * as Sentry from '@sentry/react-native';
+// import * as Sentry from '@sentry/react-native';
+import { Sentry } from '@/lib/sentry';
 
 const speaker = (overrides: Partial<Speaker>): Speaker =>
   ({

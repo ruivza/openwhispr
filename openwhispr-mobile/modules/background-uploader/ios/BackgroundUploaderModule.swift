@@ -31,6 +31,43 @@ private struct ProviderRequest: Record {
 
 private enum BackgroundUploaderConstants {
   static let sessionIdentifier = "com.openwhispr.background-uploader"
+  private static let retirementLock = NSLock()
+  private static var retiredSession: URLSession?
+  private static var retirementFinished = false
+
+  static func retireHostedUploads() {
+    retirementLock.lock()
+    if retiredSession != nil {
+      let finished = retirementFinished
+      retirementLock.unlock()
+      if finished {
+        DispatchQueue.main.async { BackgroundUploaderAppDelegate.invokeCompletionHandler() }
+      }
+      return
+    }
+    // Reattach only to cancel OS-persisted hosted jobs from an older build.
+    // Direct BYOK requests use ProviderRequestTransport's ephemeral session.
+    let configuration = URLSessionConfiguration.background(withIdentifier: sessionIdentifier)
+    configuration.sessionSendsLaunchEvents = false
+    let retiring = URLSession(configuration: configuration, delegate: UploadDelegate.shared, delegateQueue: nil)
+    retiredSession = retiring
+    retirementLock.unlock()
+    retiring.getAllTasks { tasks in
+      tasks.forEach { $0.cancel() }
+      retiring.invalidateAndCancel()
+    }
+  }
+
+  static func finishHostedRetirement(_ session: URLSession) {
+    retirementLock.lock()
+    guard retiredSession === session else {
+      retirementLock.unlock()
+      return
+    }
+    retirementFinished = true
+    retirementLock.unlock()
+    DispatchQueue.main.async { BackgroundUploaderAppDelegate.invokeCompletionHandler() }
+  }
   static let pendingTranscriptKey = "keyboard_pending_transcript"
   static let pendingTranscriptJobIdKey = "keyboard_pending_transcript_job_id"
   static let orphanedRawTranscriptKey = "keyboard_orphaned_raw_transcript"
@@ -115,9 +152,15 @@ private final class UploadDelegate: NSObject, URLSessionDataDelegate, URLSession
   }
 
   func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
-    DispatchQueue.main.async {
-      BackgroundUploaderAppDelegate.invokeCompletionHandler()
-    }
+    // Legacy completion waited only for event delivery:
+    // DispatchQueue.main.async {
+    //   BackgroundUploaderAppDelegate.invokeCompletionHandler()
+    // }
+    // The retired hosted session must finish cancellation and invalidation first.
+  }
+
+  func urlSession(_ session: URLSession, didBecomeInvalidWithError error: Error?) {
+    BackgroundUploaderConstants.finishHostedRetirement(session)
   }
 
   private func handleAlive(upload: PendingUpload, task: URLSessionTask, error: Error?) {
@@ -272,6 +315,7 @@ public class BackgroundUploaderAppDelegate: ExpoAppDelegateSubscriber {
     Self.lock.lock()
     Self.pendingCompletionHandler = completionHandler
     Self.lock.unlock()
+    BackgroundUploaderConstants.retireHostedUploads()
     return true
   }
 
@@ -292,24 +336,29 @@ public class BackgroundUploaderModule: Module {
     Name("BackgroundUploader")
 
     OnCreate {
-      let config = URLSessionConfiguration.background(
-        withIdentifier: BackgroundUploaderConstants.sessionIdentifier
-      )
-      config.sessionSendsLaunchEvents = true
-      config.isDiscretionary = false
-      config.waitsForConnectivity = true
-      config.allowsCellularAccess = true
-      config.timeoutIntervalForRequest = 45
-      config.timeoutIntervalForResource = 60
-      self.session = URLSession(
-        configuration: config,
-        delegate: UploadDelegate.shared,
-        delegateQueue: nil
-      )
+//       let config = URLSessionConfiguration.background(
+//         withIdentifier: BackgroundUploaderConstants.sessionIdentifier
+//       )
+//       config.sessionSendsLaunchEvents = true
+//       config.isDiscretionary = false
+//       config.waitsForConnectivity = true
+//       config.allowsCellularAccess = true
+//       config.timeoutIntervalForRequest = 45
+//       config.timeoutIntervalForResource = 60
+//       self.session = URLSession(
+//         configuration: config,
+//         delegate: UploadDelegate.shared,
+//         delegateQueue: nil
+//       )
+//       // This legacy session carries hosted uploads only. Cancel tasks restored
+//       // from an older build; BYOK uses the separate providerTransport below.
+//       self.session.invalidateAndCancel()
+      BackgroundUploaderConstants.retireHostedUploads()
     }
 
     AsyncFunction("upload") { (request: UploadRequest, promise: Promise) in
-      self.startUpload(request: request, promise: promise)
+      // self.startUpload(request: request, promise: promise)
+      promise.reject("HOSTED_SERVICES_DISABLED", "Use On-Device or Bring Your Own Key in AI Models.")
     }
 
     AsyncFunction("requestProvider") { (request: ProviderRequest, promise: Promise) in

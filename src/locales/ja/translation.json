@@ -3954,7 +3954,13 @@
       "oauthTitle": "OAuth でログイン",
       "oauthDescription": "OAuth 対応のクライアントにサーバー URL を追加し、OpenWhispr にログインしてアクセスを許可します。API キーは不要です。",
       "apiKeyTitle": "API キーを使用",
-      "apiKeyDescription": "リクエストヘッダーに対応するクライアントでは、必要な権限を持つ個人用 API キーを作成し、以下のヘッダーを使用してください。"
+      "apiKeyDescription": "リクエストヘッダーに対応するクライアントでは、必要な権限を持つ個人用 API キーを作成し、以下のヘッダーを使用してください。",
+      "localDescription": "MCP クライアントを、このコンピューター上のメモと文字起こしに接続します。",
+      "localRequirements": "ローカル stdio のみ対応しています。接続中は OpenWhispr を起動したままにしてください。 AppImage は現在サポートされていません。インストール版をご利用ください。",
+      "localConfigTitle": "MCP クライアント設定",
+      "localConfigDescription": "この JSON をクライアントの MCP 設定に追加・統合し、保存後にクライアントを再起動してください。",
+      "copyConfig": "設定をコピー",
+      "configLoadFailed": "ローカル MCP 設定を読み込めませんでした。"
     },
     "cli": {
       "description": "ターミナルからアシスタントにメモへのアクセスを許可します。",

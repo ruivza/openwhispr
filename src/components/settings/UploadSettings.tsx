@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
+import forkConfig from "../../config/fork.json";
 import { Cloud, Key, Cpu, Network, ShieldCheck } from "../icons";
 import {
   TRANSCRIPTION_ENTERPRISE_POLICY_PROVIDER_IDS,
@@ -50,44 +51,46 @@ export function UploadTranscriptionPanel() {
     effectiveMode: effectiveTranscriptionMode,
     isModeAllowed,
   } = usePolicyModeOptions<InferenceModeOption>(
-    [
-      {
-        id: "openwhispr",
-        label: t("settingsPage.transcription.modes.openwhispr"),
-        description: t("settingsPage.transcription.modes.openwhisprDesc"),
-        icon: <Cloud className="w-4 h-4" />,
-        disabled: !isSignedIn,
-        signInRequired: !isSignedIn,
-      },
-      {
-        id: "providers",
-        label: t("settingsPage.transcription.modes.providers"),
-        description: t("settingsPage.transcription.modes.providersDesc"),
-        icon: <Key className="w-4 h-4" />,
-      },
-      {
-        id: "local",
-        label: t("settingsPage.transcription.modes.local"),
-        description: t("settingsPage.transcription.modes.localDesc"),
-        icon: <Cpu className="w-4 h-4" />,
-      },
-      {
-        id: "self-hosted",
-        label: t("settingsPage.transcription.modes.selfHosted"),
-        description: t("settingsPage.transcription.modes.selfHostedDesc"),
-        icon: <Network className="w-4 h-4" />,
-      },
-      ...(isEnterpriseTranscriptionOfferable(policySnapshot)
-        ? [
-            {
-              id: "enterprise" as const,
-              label: t("settingsPage.transcription.modes.enterprise"),
-              description: t("settingsPage.transcription.modes.enterpriseDesc"),
-              icon: <ShieldCheck className="w-4 h-4" />,
-            },
-          ]
-        : []),
-    ],
+    (
+      [
+        {
+          id: "openwhispr",
+          label: t("settingsPage.transcription.modes.openwhispr"),
+          description: t("settingsPage.transcription.modes.openwhisprDesc"),
+          icon: <Cloud className="w-4 h-4" />,
+          disabled: !isSignedIn,
+          signInRequired: !isSignedIn,
+        },
+        {
+          id: "providers",
+          label: t("settingsPage.transcription.modes.providers"),
+          description: t("settingsPage.transcription.modes.providersDesc"),
+          icon: <Key className="w-4 h-4" />,
+        },
+        {
+          id: "local",
+          label: t("settingsPage.transcription.modes.local"),
+          description: t("settingsPage.transcription.modes.localDesc"),
+          icon: <Cpu className="w-4 h-4" />,
+        },
+        {
+          id: "self-hosted",
+          label: t("settingsPage.transcription.modes.selfHosted"),
+          description: t("settingsPage.transcription.modes.selfHostedDesc"),
+          icon: <Network className="w-4 h-4" />,
+        },
+        ...(isEnterpriseTranscriptionOfferable(policySnapshot)
+          ? [
+              {
+                id: "enterprise" as const,
+                label: t("settingsPage.transcription.modes.enterprise"),
+                description: t("settingsPage.transcription.modes.enterpriseDesc"),
+                icon: <ShieldCheck className="w-4 h-4" />,
+              },
+            ]
+          : []),
+      ] as InferenceModeOption[]
+    ).filter((mode) => forkConfig.hostedServicesEnabled || mode.id !== "openwhispr"),
     "transcription",
     uploadTranscriptionMode,
     {
@@ -96,6 +99,7 @@ export function UploadTranscriptionPanel() {
     }
   );
   const handleTranscriptionModeSelect = (mode: InferenceMode) => {
+    if (mode === "openwhispr" && !forkConfig.hostedServicesEnabled) return;
     if (!isModeAllowed(mode)) return;
     if (mode === "openwhispr" && !isSignedIn) {
       requestSignIn();

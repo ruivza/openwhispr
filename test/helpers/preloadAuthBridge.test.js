@@ -41,6 +41,12 @@ function loadPreloadApi() {
   return { api: exposedApi, invocations, listeners, sends };
 }
 
+test("local MCP configuration uses a parameterless IPC request", async () => {
+  const { api, invocations } = loadPreloadApi();
+  await api.getLocalMcpConfig();
+  assert.deepEqual(invocations, [["get-local-mcp-config"]]);
+});
+
 test("auth token-state listener strips the Electron event object", () => {
   const { api, listeners } = loadPreloadApi();
   const payload = { generation: 7, hasToken: true };

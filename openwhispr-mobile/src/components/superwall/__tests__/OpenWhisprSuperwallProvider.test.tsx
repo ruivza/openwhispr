@@ -49,6 +49,9 @@ describe('OpenWhisprSuperwallProvider', () => {
 
     const providerProps = jest.mocked(SuperwallProvider).mock.calls[0]?.[0];
     expect(providerProps?.options?.testModeBehavior).toBe('never');
+    expect(providerProps?.options?.eventTrackingBehavior).toBe('none');
+    expect(providerProps?.options?.passIdentifiersToPlayStore).toBe(false);
+    expect(providerProps?.options?.enableExperimentalDeviceVariables).toBe(false);
   });
 
   it('never enters Superwall test mode on Android either', () => {
@@ -62,5 +65,6 @@ describe('OpenWhisprSuperwallProvider', () => {
 
     const providerProps = jest.mocked(SuperwallProvider).mock.calls[0]?.[0];
     expect(providerProps?.options?.testModeBehavior).toBe('never');
+    expect(providerProps?.options?.eventTrackingBehavior).toBe('none');
   });
 });

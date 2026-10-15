@@ -25,6 +25,7 @@ const {
   systemPreferences,
 } = require("electron");
 const path = require("path");
+const fork = require("./src/config/fork.json");
 const http = require("http");
 const tls = require("tls");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
@@ -492,10 +493,12 @@ function initializeCoreManagers() {
   // account's data visible; a stale or rotated credential fails the hash
   // check and restores nothing.
   const accountScopeBinding = require("./src/helpers/accountScopeBinding");
-  const bootAccountId = accountScopeBinding.resolveBootAccountScope({
-    token: require("./src/helpers/tokenStore").get(),
-    binding: accountScopeBinding.read(),
-  });
+  const bootAccountId = fork.officialAccountEnabled
+    ? accountScopeBinding.resolveBootAccountScope({
+        token: require("./src/helpers/tokenStore").get(),
+        binding: accountScopeBinding.read(),
+      })
+    : null;
   if (bootAccountId) databaseManager.setActiveAccountId(bootAccountId);
   clipboardManager = new ClipboardManager();
   const { createConnectorManager } = require("./src/helpers/connectors/connectorManager");
@@ -510,11 +513,16 @@ function initializeCoreManagers() {
   // The same account receipts are filed under (ipcHandlers' getAccountScope):
   // the one bound to the credential in use. databaseManager's scope doesn't
   // move when one signed-in token replaces another.
-  const getConnectorAccountScope = () =>
-    accountScopeBinding.resolveActiveAccountScope({
-      ...require("./src/helpers/tokenStore").getState(),
-      binding: accountScopeBinding.read(),
-    });
+  // const getConnectorAccountScope = () =>
+  //   accountScopeBinding.resolveActiveAccountScope({
+  //     ...require("./src/helpers/tokenStore").getState(),
+  //     binding: accountScopeBinding.read(),
+  //   });
+  const { createLocalConnectorProfile } = require("./src/helpers/connectors/localProfile");
+  const localConnectorProfile = createLocalConnectorProfile({
+    dir: path.join(app.getPath("userData"), "connectors"),
+  });
+  const getConnectorAccountScope = localConnectorProfile.getScope;
   const getConnectorAccountId = connectorAccountIdFrom(getConnectorAccountScope);
   const connectorCredentials = createConnectorCredentials({
     store: createCredentialStore({
@@ -872,6 +880,7 @@ async function handleNoteDeepLink(deepLinkUrl) {
 }
 
 function handleInvitationDeepLink(deepLinkUrl) {
+  if (!fork.hostedServicesEnabled) return;
   try {
     const match = deepLinkUrl.match(/invitations\/([^/?#]+)/);
     const token = match?.[1];
@@ -891,6 +900,7 @@ function handleInvitationDeepLink(deepLinkUrl) {
 }
 
 function resolveAuthUrl() {
+  if (!fork.officialAccountEnabled) return "";
   const fs = require("fs");
   const envPath = path.join(__dirname, "src", "dist", "runtime-env.json");
   let runtimeEnv = {};
@@ -914,6 +924,7 @@ function getOauthCookieName() {
 // Older website builds send the signed cookie value as `?token=`; trade it
 // for the raw session.token the bearer plugin expects.
 async function exchangeSignedTokenForRawBearer(signedToken) {
+  if (!fork.officialAccountEnabled) return null;
   try {
     const res = await net.fetch(`${resolveAuthUrl()}/api/auth/get-session`, {
       headers: { Cookie: `${getOauthCookieName()}=${signedToken}` },
@@ -938,6 +949,7 @@ async function exchangeSignedTokenForRawBearer(signedToken) {
 // token, store it, and remove the cookie. Non-fatal — failures fall through
 // to the normal sign-in flow.
 async function migrateCookieToBearerToken() {
+  if (!fork.officialAccountEnabled) return;
   const tokenStore = require("./src/helpers/tokenStore");
   if (tokenStore.get()) return;
 
@@ -966,6 +978,7 @@ async function migrateCookieToBearerToken() {
 // Persist the bearer token and reload the control panel so the renderer's
 // authClient sends `Authorization: Bearer <token>` on its next request.
 async function applySessionTokenAndRefresh(token) {
+  if (!fork.officialAccountEnabled) return;
   if (!token) return;
   if (!isLiveWindow(windowManager?.controlPanelWindow)) return;
 
@@ -992,6 +1005,7 @@ async function applySessionTokenAndRefresh(token) {
 }
 
 async function handleOAuthDeepLink(deepLinkUrl) {
+  if (!fork.officialAccountEnabled) return;
   try {
     const parsed = new URL(deepLinkUrl);
     const bearerToken = parsed.searchParams.get("bearer_token");
@@ -1009,6 +1023,7 @@ async function handleOAuthDeepLink(deepLinkUrl) {
 }
 
 function handleUpgradeDeepLink() {
+  if (!fork.hostedServicesEnabled) return;
   if (isLiveWindow(windowManager?.controlPanelWindow)) {
     windowManager.controlPanelWindow.webContents.executeJavaScript(
       'window.dispatchEvent(new Event("upgrade-success"))'
@@ -1046,6 +1061,7 @@ function writeCorsHeaders(res) {
 }
 
 function startAuthBridgeServer() {
+  if (!fork.officialAccountEnabled) return;
   if (APP_CHANNEL !== "development" || authBridgeServer) {
     return;
   }

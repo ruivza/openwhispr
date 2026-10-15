@@ -18,6 +18,10 @@ test("retired groq model selections migrate to served replacements", async (t) =
 
   const { storage } = installBrowserGlobals(t);
   const vite = await createRendererServer(t, {
+    // Exercise the retained original migration contract independently of fork defaults.
+    mockModules: {
+      "/config/fork.json": '{"officialAccountEnabled":true,"hostedServicesEnabled":true}',
+    },
     cachePrefix: "openwhispr-retired-groq-models-test-",
   });
 

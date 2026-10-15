@@ -64,23 +64,28 @@ export const useAuthStore = create<AuthStore>((set) => ({
   isInitialized: false,
   error: null,
 
+//   initialize: async () => {
+//     set({ isLoading: true });
+//     await anonymousSignInInFlight?.catch(() => undefined);
+//     try {
+//       const user = await getSession();
+//       if (user) {
+//         await claimNoteShares(user);
+//         const sessionCookie = await getStoredSession();
+//         set({ user, sessionCookie, isGuest: false, isInitialized: true, isLoading: false });
+//       } else {
+//         const isGuest = (await SecureStore.getItemAsync(GUEST_SESSION_KEY)) === 'true';
+//         useUsageStore.getState().reset();
+//         set({ user: null, sessionCookie: null, isGuest, isInitialized: true, isLoading: false });
+//       }
+//     } catch {
+//       set({ isInitialized: true, isLoading: false });
+//     }
+//   },
+//
   initialize: async () => {
-    set({ isLoading: true });
-    await anonymousSignInInFlight?.catch(() => undefined);
-    try {
-      const user = await getSession();
-      if (user) {
-        await claimNoteShares(user);
-        const sessionCookie = await getStoredSession();
-        set({ user, sessionCookie, isGuest: false, isInitialized: true, isLoading: false });
-      } else {
-        const isGuest = (await SecureStore.getItemAsync(GUEST_SESSION_KEY)) === 'true';
-        useUsageStore.getState().reset();
-        set({ user: null, sessionCookie: null, isGuest, isInitialized: true, isLoading: false });
-      }
-    } catch {
-      set({ isInitialized: true, isLoading: false });
-    }
+    useUsageStore.getState().reset();
+    set({ user: null, sessionCookie: null, isGuest: true, isInitialized: true, isLoading: false, loadingProvider: null, error: null });
   },
 
   signIn: async (email, password) => {
@@ -140,50 +145,59 @@ export const useAuthStore = create<AuthStore>((set) => ({
   // build. Silently creating a server-side record for someone who declined one
   // is a consent question, not a plumbing detail — they keep the on-device
   // experience they opted into.
+//   ensureAnonymousSession: async () => {
+//     const { user, isGuest, isInitialized, isLoading } = useAuthStore.getState();
+//     if (!isInitialized || user || isGuest || isLoading) return;
+//     // The store check above can't dedupe concurrent callers, since `user` is
+//     // only set after the round trip — and each extra call would leave behind a
+//     // real, orphaned user row on the server.
+//     if (anonymousSignInInFlight) return anonymousSignInInFlight;
+//
+//     anonymousSignInInFlight = (async () => {
+//       const result = await signInAnonymously();
+//       if (!result.user) {
+//         // This session is load-bearing for cloud transcription, usage limits
+//         // and the paywall for the whole first run, so a refusal the server
+//         // sent (route missing after a bad deploy, plugin off, rate limited)
+//         // must be loud. No response, or a 5xx, is the offline-at-first-launch
+//         // case the foreground retry exists for; it must not read as an outage.
+//         const refused = result.status !== null && result.status < 500;
+//         Sentry.captureMessage('Anonymous session could not be created', {
+//           level: refused ? 'error' : 'warning',
+//           tags: { feature: 'onboarding-auth' },
+//           extra: { reason: result.error ?? 'no user returned' },
+//         });
+//         return;
+//       }
+//
+//       // Deliberately skips initAuthenticatedUser: the server bootstraps this
+//       // user on its first authenticated request, and there is no real address
+//       // to send a welcome or verification email to yet.
+//       set({ user: result.user, sessionCookie: result.sessionCookie, isGuest: false });
+//     })().finally(() => {
+//       anonymousSignInInFlight = null;
+//     });
+//
+//     return anonymousSignInInFlight;
+//   },
+//
   ensureAnonymousSession: async () => {
-    const { user, isGuest, isInitialized, isLoading } = useAuthStore.getState();
-    if (!isInitialized || user || isGuest || isLoading) return;
-    // The store check above can't dedupe concurrent callers, since `user` is
-    // only set after the round trip — and each extra call would leave behind a
-    // real, orphaned user row on the server.
-    if (anonymousSignInInFlight) return anonymousSignInInFlight;
-
-    anonymousSignInInFlight = (async () => {
-      const result = await signInAnonymously();
-      if (!result.user) {
-        // This session is load-bearing for cloud transcription, usage limits
-        // and the paywall for the whole first run, so a refusal the server
-        // sent (route missing after a bad deploy, plugin off, rate limited)
-        // must be loud. No response, or a 5xx, is the offline-at-first-launch
-        // case the foreground retry exists for; it must not read as an outage.
-        const refused = result.status !== null && result.status < 500;
-        Sentry.captureMessage('Anonymous session could not be created', {
-          level: refused ? 'error' : 'warning',
-          tags: { feature: 'onboarding-auth' },
-          extra: { reason: result.error ?? 'no user returned' },
-        });
-        return;
-      }
-
-      // Deliberately skips initAuthenticatedUser: the server bootstraps this
-      // user on its first authenticated request, and there is no real address
-      // to send a welcome or verification email to yet.
-      set({ user: result.user, sessionCookie: result.sessionCookie, isGuest: false });
-    })().finally(() => {
-      anonymousSignInInFlight = null;
-    });
-
-    return anonymousSignInInFlight;
+    // A local guest does not create an anonymous record at the official API.
   },
 
+//   signOut: async () => {
+//     set({ isLoading: true });
+//     await anonymousSignInInFlight?.catch(() => undefined);
+//     await signOutApi();
+//     await SecureStore.deleteItemAsync(GUEST_SESSION_KEY);
+//     useUsageStore.getState().reset();
+//     clearAgentSessions();
+//     set({ user: null, sessionCookie: null, isGuest: false, isLoading: false });
+//   },
+//
   signOut: async () => {
-    set({ isLoading: true });
-    await anonymousSignInInFlight?.catch(() => undefined);
-    await signOutApi();
-    await SecureStore.deleteItemAsync(GUEST_SESSION_KEY);
-    useUsageStore.getState().reset();
+    await useAuthStore.getState().continueAsGuest();
     clearAgentSessions();
-    set({ user: null, sessionCookie: null, isGuest: false, isLoading: false });
   },
 
   deleteAccount: async () => {

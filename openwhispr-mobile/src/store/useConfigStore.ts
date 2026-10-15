@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { UserConfig } from '../types';
 import { StorageService } from '../services/storage/StorageService';
 import { useProcessingModeStore } from './useProcessingModeStore';
+import { migrateHostedConfig } from '@/lib/fork';
 
 interface ConfigState {
   config: UserConfig | null;
@@ -13,7 +14,9 @@ interface ConfigState {
 }
 
 const defaultConfig: UserConfig = {
-  defaultMode: 'cloud',
+  // defaultMode: 'cloud',
+  defaultMode: 'private',
+  cloudBackupEnabled: false,
   appleLocalIntelligenceEnabled: true,
 };
 
@@ -26,7 +29,13 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       const config = await StorageService.getConfig();
-      const resolvedConfig = config || defaultConfig;
+      // const resolvedConfig = config || defaultConfig;
+      const resolvedConfig = migrateHostedConfig(config || defaultConfig);
+      if (config && JSON.stringify(config) !== JSON.stringify(resolvedConfig)) {
+        // A failed migration write must not replace an existing BYOK setup with
+        // defaults. Keep its safe in-memory routes and retry on the next launch.
+        await StorageService.saveConfig(resolvedConfig).catch(() => undefined);
+      }
       useProcessingModeStore.getState().resetToDefault(resolvedConfig.defaultMode);
       set({ config: resolvedConfig, isLoading: false });
     } catch (error) {
@@ -41,7 +50,8 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
 
   updateConfig: async (updates: Partial<UserConfig>) => {
     const currentConfig = get().config || defaultConfig;
-    const newConfig = { ...currentConfig, ...updates };
+    // const newConfig = { ...currentConfig, ...updates };
+    const newConfig = migrateHostedConfig({ ...currentConfig, ...updates });
 
     set({ isLoading: true, error: null });
     try {

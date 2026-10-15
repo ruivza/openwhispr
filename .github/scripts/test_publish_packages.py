@@ -1,4 +1,7 @@
+import base64
+import hashlib
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -60,6 +63,47 @@ class PublishingTests(unittest.TestCase):
             staged = publisher.stage_packages([package], root / "staged")
             self.assertEqual(staged[0].name, "OpenWhispr.Setup.1.10.4.exe")
             self.assertEqual(publisher.sha256(staged[0]), publisher.sha256(package))
+
+    def test_update_metadata_names_and_hashes_match_final_assets(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            exe = root / "OpenWhispr Setup 1.10.4.exe"
+            image = root / "OpenWhispr-1.10.4-linux-x64.AppImage"
+            exe.write_bytes(b"unsigned NSIS installer")
+            # AppImage differential-map length is stored in its final 4 bytes.
+            image.write_bytes(b"appimage payload and map" + (3).to_bytes(4, "big"))
+            staged = publisher.stage_packages([exe, image], root / "staged")
+            manifests = publisher.update_manifests(staged, "1.10.4", root / "staged")
+            self.assertEqual({p.name for p in manifests}, {"latest.yml", "latest-linux.yml"})
+            for manifest in manifests:
+                info = json.loads(manifest.read_text())
+                target = root / "staged" / info["files"][0]["url"]
+                expected = base64.b64encode(hashlib.sha512(target.read_bytes()).digest()).decode()
+                self.assertEqual(info["version"], "1.10.4")
+                self.assertEqual(info["files"][0]["sha512"], expected)
+                self.assertEqual(info["files"][0]["size"], target.stat().st_size)
+                self.assertEqual(info["path"], target.name)
+                self.assertEqual(info["sha512"], expected)
+            self.assertEqual(json.loads((root / "staged/latest.yml").read_text())["path"],
+                             "OpenWhispr.Setup.1.10.4.exe")
+            self.assertEqual(json.loads((root / "staged/latest-linux.yml").read_text())["files"][0]["blockMapSize"], 3)
+
+    def test_missing_or_ambiguous_updater_payloads_fail_before_publishing(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for names in (("package.exe",), ("one.exe", "two.exe", "package.AppImage")):
+                packages = [root / name for name in names]
+                for package in packages:
+                    package.write_bytes(b"payload")
+                with self.subTest(names=names), self.assertRaisesRegex(ValueError, "Exactly one"):
+                    publisher.update_manifests(packages, "1.10.4", root)
+
+    def test_upstream_or_other_repositories_are_rejected_without_network_calls(self):
+        with patch.object(publisher, "gh") as gh:
+            for repository in ("OpenWhispr/openwhispr", "other/openwhispr"):
+                with self.subTest(repository=repository), self.assertRaisesRegex(ValueError, "only to"):
+                    publisher.upload_packages(repository, "v1.10.4", [])
+            gh.assert_not_called()
 
     def test_can_refresh_only_its_own_generated_checksum_manifest(self):
         with tempfile.TemporaryDirectory() as temp:

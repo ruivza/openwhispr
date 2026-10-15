@@ -1,4 +1,22 @@
 const { connectorPolicyState, policyRefusal } = require("./connectorPolicy");
+const { isLocalConnectorScope } = require("./localProfile");
+
+// Local connectors need a valid local owner, not an official account or plan.
+// Provider OAuth permissions and the manager's approval checks remain in force.
+function createLocalConnectorPolicyResolver({ getAccountScope, getPolicySnapshot }) {
+  return async () => {
+    try {
+      // return isLocalConnectorScope(getAccountScope()) ? "allowed" : "unavailable";
+      if (!isLocalConnectorScope(getAccountScope())) return "unavailable";
+      if (!getPolicySnapshot) return "allowed";
+      const snapshot = await getPolicySnapshot();
+      // null means no retained official identity/cache applies to this device.
+      return snapshot === null ? "allowed" : connectorPolicyState(snapshot);
+    } catch {
+      return "unavailable";
+    }
+  };
+}
 
 const POLICY_TIMEOUT_MS = 1500;
 // A name or part of an address; anything longer is not a lookup.
@@ -292,4 +310,5 @@ module.exports = {
   createConnectorPolicyResolver,
   createConnectorAuthLookup,
   connectorAccountIdFrom,
+  createLocalConnectorPolicyResolver,
 };

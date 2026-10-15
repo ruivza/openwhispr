@@ -7,6 +7,7 @@ const { isTransportErrorCode } = require("./deliveryClassifier");
 const { connectorResultPage } = require("./oauthResultPage");
 const { createLinearApi } = require("./linearApi");
 const { createLinearAuth, linearRedirectUri } = require("./linearAuth");
+const { configuredString } = require("./localOAuthConfig");
 const { createLinearTeams } = require("./linearTeams");
 const {
   MAX_TITLE_LENGTH,
@@ -695,13 +696,16 @@ function buildLinearConnector(deps) {
     api,
     credentials: deps.credentials,
     // Read at each use, so a build's client id is never cached or logged.
-    getClientId: () => deps.env?.LINEAR_CLIENT_ID,
+    getClientId: () =>
+      linearRedirectUri(deps.env) ? configuredString(deps.env?.CONNECTOR_LINEAR_CLIENT_ID) : null,
+    // getClientId: () => deps.env?.LINEAR_CLIENT_ID,
     runOAuthLoopbackFlow: deps.runOAuthLoopbackFlow,
     OAuthFlowError: deps.OAuthFlowError,
     // Linear matches a registered redirect URI exactly, port included, so
     // the loopback server's random port can't be registered: sign-in goes
     // through the openwhispr.com relay instead.
-    redirectUri: linearRedirectUri(deps.env),
+    getRedirectUri: () => linearRedirectUri(deps.env),
+    // redirectUri: linearRedirectUri(deps.env),
     renderResultPage: connectorResultPage(deps, "linear"),
     logger: deps.logger,
   });

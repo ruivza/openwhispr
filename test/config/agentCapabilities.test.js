@@ -20,7 +20,8 @@ function input(overrides = {}) {
     webSearch: { allowed: true, blockedByOrg: false },
     calendarConnected: true,
     connectors: {
-      hasPlan: true,
+      available: true,
+      // hasPlan: true,
       allowed: true,
       blockedByOrg: false,
       statuses: { slack: READY, linear: READY, github: READY },
@@ -30,11 +31,13 @@ function input(overrides = {}) {
   };
 }
 
-test("everything usable leaves nothing to name", async () => {
+test("local tools remain usable while hosted search is not configured", async () => {
   const { resolveUnavailableCapabilities, describeUnavailable } = await load();
   const unavailable = resolveUnavailableCapabilities(input());
-  assert.deepEqual(unavailable, []);
-  assert.equal(describeUnavailable(unavailable), "");
+  // assert.deepEqual(unavailable, []);
+  // assert.equal(describeUnavailable(unavailable), "");
+  assert.deepEqual(unavailable, [{ name: "Web search", reason: "notConfigured" }]);
+  assert.doesNotMatch(describeUnavailable(unavailable), /sign in|paid.*plan|upgrade/i);
 });
 
 test("a model too small for tools names that alone, with where to pick another", async () => {
@@ -62,19 +65,20 @@ test("a model too small for tools never promises integrations a surface doesn't 
   assert.equal(entry.name, "Tools (web search, calendar, searching or changing notes)");
 });
 
-test("signed out, web search and connectors say to sign in", async () => {
+test("signed-out users can use connected local connectors without official sign-in", async () => {
   const { resolveUnavailableCapabilities } = await load();
   const unavailable = resolveUnavailableCapabilities(input({ isSignedIn: false }));
   assert.deepEqual(
     unavailable.map((item) => [item.name.split(" ")[0], item.reason]),
     [
-      ["Web", "signedOut"],
-      ["Integrations", "signedOut"],
+      ["Web", "notConfigured"],
+      // ["Web", "signedOut"],
+      // ["Integrations", "signedOut"],
     ]
   );
 });
 
-test("web search off by the org reads as policy, while a loading policy is temporary", async () => {
+test("web search preserves an org refusal and reports absent hosted service configuration", async () => {
   const { resolveUnavailableCapabilities } = await load();
   const blocked = resolveUnavailableCapabilities(
     input({ webSearch: { allowed: false, blockedByOrg: true } })
@@ -83,22 +87,30 @@ test("web search off by the org reads as policy, while a loading policy is tempo
     input({ webSearch: { allowed: false, blockedByOrg: false } })
   );
   assert.equal(blocked[0].reason, "policyOff");
-  assert.equal(loading[0].reason, "policyLoading");
+  // assert.equal(loading[0].reason, "policyLoading");
+  assert.equal(loading[0].reason, "notConfigured");
 });
 
-test("connectors name the org, then the plan, then a loading policy, as one line", async () => {
+test("connectors preserve org, missing configuration and loading-policy explanations", async () => {
   const { resolveUnavailableCapabilities } = await load();
   const connectors = input().connectors;
   const reasonFor = (overrides) =>
-    resolveUnavailableCapabilities(input({ connectors: { ...connectors, ...overrides } })).map(
-      (item) => item.reason
-    );
+    resolveUnavailableCapabilities(input({ connectors: { ...connectors, ...overrides } }))
+      .filter((item) => item.delivers)
+      .map((item) => item.reason);
 
   // A free member of an org that turned connectors off isn't told to buy a plan.
-  assert.deepEqual(reasonFor({ hasPlan: false, allowed: false, blockedByOrg: true }), [
+  // assert.deepEqual(reasonFor({ hasPlan: false, allowed: false, blockedByOrg: true }), [
+  assert.deepEqual(reasonFor({ available: false, allowed: false, blockedByOrg: true }), [
     "policyOff",
   ]);
-  assert.deepEqual(reasonFor({ hasPlan: false }), ["planRequired"]);
+  // assert.deepEqual(reasonFor({ hasPlan: false }), ["planRequired"]);
+  assert.deepEqual(reasonFor({ available: false }), ["notConfigured"]);
+  assert.deepEqual(
+    reasonFor({ hasPlan: false }),
+    [],
+    "a legacy subscription flag grants no authority"
+  );
   assert.deepEqual(reasonFor({ allowed: false, blockedByOrg: true }), ["policyOff"]);
   assert.deepEqual(reasonFor({ allowed: false }), ["policyLoading"]);
 });
@@ -113,7 +125,7 @@ test("each connector that isn't connected or needs a reconnect is named on its o
         statuses: {
           slack: { ...READY, connected: false },
           linear: { ...READY, needsReconnect: true },
-          // A build without GitHub's client hides it, so it's never named.
+          // A missing own OAuth client needs configuration, not official login.
           github: { ...READY, connected: false, configured: false },
           gmail: { ...READY, connected: false },
         },
@@ -123,9 +135,11 @@ test("each connector that isn't connected or needs a reconnect is named on its o
   assert.deepEqual(
     unavailable.map((item) => [item.name, item.reason, item.where]),
     [
+      ["Web search", "notConfigured", undefined],
       ["Calendar", "notConnected", LOCATIONS.calendars],
       ["Slack", "notConnected", LOCATIONS.connectors],
       ["Linear", "needsReconnect", LOCATIONS.connectors],
+      ["GitHub", "notConfigured", LOCATIONS.connectors],
     ]
   );
 });
@@ -135,7 +149,8 @@ test("a connector whose status hasn't loaded isn't reported as disconnected", as
   const unavailable = resolveUnavailableCapabilities(
     input({ connectors: { ...input().connectors, statuses: {} } })
   );
-  assert.deepEqual(unavailable, []);
+  // assert.deepEqual(unavailable, []);
+  assert.deepEqual(unavailable, [{ name: "Web search", reason: "notConfigured" }]);
 });
 
 test("a surface without connectors never names them", async () => {
@@ -156,7 +171,7 @@ test("every connector entry is one that sends for the user, and nothing else is"
     signedOut.map((item) => [item.name, item.delivers === true]),
     [
       ["Web search", false],
-      ["Integrations (Email, Slack, Linear, GitHub)", true],
+      // ["Integrations (Email, Slack, Linear, GitHub)", true],
     ]
   );
   const notConnected = resolveUnavailableCapabilities(
@@ -169,20 +184,26 @@ test("every connector entry is one that sends for the user, and nothing else is"
   );
   assert.deepEqual(
     notConnected.map((item) => [item.name, item.delivers]),
-    [["Slack", true]]
+    [
+      ["Web search", undefined],
+      ["Slack", true],
+    ]
+    // [["Slack", true]]
   );
 });
 
 test("the description tells the model to explain how to enable each one", async () => {
   const { describeUnavailable } = await load();
   const text = describeUnavailable([
-    { name: "Web search", reason: "signedOut", where: LOCATIONS.account },
+    { name: "Web search", reason: "notConfigured" },
+    // { name: "Web search", reason: "signedOut", where: LOCATIONS.account },
     { name: "Calendar", reason: "notConnected", where: LOCATIONS.calendars },
   ]);
   assert.match(text, /tell them how to enable it instead of attempting it/);
   assert.match(
     text,
-    /^- Web search: needs the user to sign in to OpenWhispr in Settings → Profile\.$/m
+    /^- Web search: not configured; this build needs the user's own service configuration\.$/m
+    // /^- Web search: needs the user to sign in to OpenWhispr in Settings → Profile\.$/m
   );
   assert.match(
     text,
@@ -194,12 +215,14 @@ test("the description tells the model to explain how to enable each one", async 
 test("a connector that can't send still gets the text written, with a pitch at the end", async () => {
   const { describeUnavailable } = await load();
   const text = describeUnavailable([
-    { name: "Web search", reason: "signedOut", where: LOCATIONS.account },
+    { name: "Web search", reason: "notConfigured" },
+    // { name: "Web search", reason: "signedOut", where: LOCATIONS.account },
     { name: "Slack", reason: "notConnected", where: LOCATIONS.connectors, delivers: true },
     { name: "Integrations", reason: "policyOff", delivers: true },
   ]);
   const [general, delivering] = text.split("\n\n");
-  assert.match(general, /^- Web search: needs the user to sign in/m);
+  // assert.match(general, /^- Web search: needs the user to sign in/m);
+  assert.match(general, /^- Web search: not configured/m);
   assert.doesNotMatch(general, /Slack|Integrations/);
   assert.match(
     delivering,

@@ -56,7 +56,7 @@ import {
   effectiveAudioRetentionDays,
   effectiveLocalHistoryEnabled,
   isAgentAllowed,
-  isCloudBackupAllowed,
+  // isCloudBackupAllowed, // Fork: cloud statistics uploads are disabled.
   isTranscriptionContextAllowed,
   isTranscriptionSelectionAllowed,
 } from "../stores/policyRules";
@@ -208,14 +208,15 @@ function getEffectiveRetentionPreferences() {
 // local write below the same gate is skipped, and the cloud must not keep rows
 // the device never recorded. Managed workspaces that forbid cloud backup forbid
 // these counters with it — they are user data leaving the device like any other.
-function analyticsSyncEnabled(settings = getSettings()) {
-  return (
-    settings.isSignedIn &&
-    settings.insightsSyncEnabled &&
-    isCloudBackupAllowed(usePolicyStore.getState()) &&
-    getEffectiveRetentionPreferences().dataRetentionEnabled
-  );
-}
+// Fork: keep Insights local. The original upload-consent check is retained below.
+// function analyticsSyncEnabled(settings = getSettings()) {
+//   return (
+//     settings.isSignedIn &&
+//     settings.insightsSyncEnabled &&
+//     isCloudBackupAllowed(usePolicyStore.getState()) &&
+//     getEffectiveRetentionPreferences().dataRetentionEnabled
+//   );
+// }
 
 // Shared by the agent route and its text-only retry, which needs the prompt
 // without the screen-context suffix.
@@ -672,6 +673,7 @@ class AudioManager {
     this._streamingCancellationGeneration = 0;
     this._activeTranscriptionAbortController = null;
     this._activeStreamingSessionId = null;
+    this._streamingUsesOpenWhisprCloud = false;
     this.streamingFallbackRecorder = null;
     this.streamingFallbackChunks = [];
     this._recordingSpool = null;
@@ -3494,20 +3496,22 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     // would make without Orukeet.
     const detectedLanguageFields = metadata.detectedLanguageFields || {};
     Object.assign(opts, detectedLanguageFields);
-    if (analyticsSyncEnabled(settings)) {
-      opts.analyticsOccurredAt = analyticsOccurredAt.toISOString();
-      opts.localDate = localDateKey(analyticsOccurredAt);
-    }
+    // Fork: no local statistics are attached to cloud processing requests.
+    // if (analyticsSyncEnabled(settings)) {
+    //   opts.analyticsOccurredAt = analyticsOccurredAt.toISOString();
+    //   opts.localDate = localDateKey(analyticsOccurredAt);
+    // }
     const cleanupCloudMode = settings.cleanupCloudMode || "openwhispr";
     // Only cloud cleanup writes a combined STT log; translation alone does not.
     // A voice assistant recording never runs cleanup, so this upload is its log.
-    if (
-      settings.useCleanupModel &&
-      cleanupCloudMode === "openwhispr" &&
-      !this.voiceAgentRequested
-    ) {
-      opts.sendLogs = "false";
-    }
+    // if (
+    //   settings.useCleanupModel &&
+    //   cleanupCloudMode === "openwhispr" &&
+    //   !this.voiceAgentRequested
+    // ) {
+    //   opts.sendLogs = "false";
+    // }
+    opts.sendLogs = "false";
 
     const dictionaryPrompt = this.getWhisperPrompt(settings);
     if (dictionaryPrompt) opts.prompt = dictionaryPrompt;
@@ -5017,15 +5021,21 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       const result = await withSessionRefresh(async () => {
         const streamingSettings = getSettings();
         const { useLocalWhisper } = streamingSettings;
-        const res = await provider.start(
-          buildStreamingSessionOptions({
-            providerName: this.getStreamingProviderName(),
-            settings: streamingSettings,
-            language: this.getEffectiveSttLanguage(streamingSettings),
-            keyterms: this.getKeyterms(),
-            voiceAgentRequested: this.voiceAgentRequested,
-          })
-        );
+        // const res = await provider.start(
+        const sessionOptions = buildStreamingSessionOptions({
+          providerName: this.getStreamingProviderName(),
+          settings: streamingSettings,
+          language: this.getEffectiveSttLanguage(streamingSettings),
+          keyterms: this.getKeyterms(),
+          voiceAgentRequested: this.voiceAgentRequested,
+        });
+        // );
+        // Bind billing to the provider session, not settings changed during a recording.
+        // Tinfoil and Corti always use the user's own credentials.
+        this._streamingUsesOpenWhisprCloud =
+          sessionOptions.mode === "openwhispr" &&
+          !["tinfoil-realtime", "corti", "corti-realtime"].includes(sessionOptions.provider);
+        const res = await provider.start(sessionOptions);
 
         return this.classifyStreamingStartResult(res, { useLocalWhisper });
       });
@@ -5347,6 +5357,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       ? (Date.now() - this.recordingStartTime) / 1000
       : null;
     const analyticsOccurredAt = new Date(this.recordingStartTime || Date.now());
+    const usesOpenWhisprCloud = this._streamingUsesOpenWhisprCloud === true;
 
     // Enter processing synchronously, before any mic/provider await. This is
     // the authoritative guard that makes a second hotkey a no-op for the full
@@ -5845,7 +5856,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
         if (wasCancelled()) return true;
       }
       const tBeforePaste = performance.now();
-      const clientTotalMs = Math.round(tBeforePaste - t0);
+      // const clientTotalMs = Math.round(tBeforePaste - t0); // Fork: remote timing disabled.
       const clientTranscriptionId =
         batchFallbackResult?.clientTranscriptionId || crypto.randomUUID();
       const resultAnalyticsOccurredAt =
@@ -5877,7 +5888,10 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
         ...(batchWarning ? { warning: batchWarning } : {}),
       });
 
-      if (!usedBatchFallback) {
+      // if (!usedBatchFallback) {
+      // Fork: BYOK sessions never report their transcript to the official usage API.
+      // Official cloud metering remains required by the existing service contract.
+      if (!usedBatchFallback && usesOpenWhisprCloud) {
         (async () => {
           try {
             await withSessionRefresh(async () => {
@@ -5885,15 +5899,16 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
                 finalText,
                 durationSeconds ?? 0,
                 {
-                  sendLogs: !usedCloudReasoning,
+                  // sendLogs: !usedCloudReasoning,
+                  sendLogs: false,
                   sttProvider: this.getStreamingProviderName(),
                   sttModel: streamingSttModel,
-                  sttProcessingMs: streamingSttProcessingMs,
+                  // sttProcessingMs: streamingSttProcessingMs,
                   sttLanguage: streamingSttLanguage,
                   ...detectedLanguageFields,
-                  audioSizeBytes: streamingAudioBytesSent || undefined,
-                  audioFormat: "linear16",
-                  clientTotalMs,
+                  // audioSizeBytes: streamingAudioBytesSent || undefined,
+                  // audioFormat: "linear16",
+                  // clientTotalMs,
                   // Always sent, like the batch cloud path: this id is what
                   // makes the row the server writes and the local one the same
                   // event. Held back until opt-in, a later sync would push the
@@ -5907,14 +5922,14 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
                   // same id, and last-write-wins replaces the label with the
                   // real mode. Neither summary renders mode either way.
                   clientTranscriptionId,
-                  ...(analyticsSyncEnabled()
-                    ? {
-                        localDate: localDateKey(analyticsOccurredAt),
-                        analyticsOccurredAt: analyticsOccurredAt.toISOString(),
-                        analyticsWordCount: streamingSttWordCount,
-                        analyticsCounterVersion: ANALYTICS_COUNTER_VERSION,
-                      }
-                    : {}),
+                  // ...(analyticsSyncEnabled()
+                  //   ? {
+                  //       localDate: localDateKey(analyticsOccurredAt),
+                  //       analyticsOccurredAt: analyticsOccurredAt.toISOString(),
+                  //       analyticsWordCount: streamingSttWordCount,
+                  //       analyticsCounterVersion: ANALYTICS_COUNTER_VERSION,
+                  //     }
+                  //   : {}),
                 }
               );
               if (!res.success) {

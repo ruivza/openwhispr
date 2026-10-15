@@ -3954,7 +3954,13 @@
       "oauthTitle": "透過 OAuth 登入",
       "oauthDescription": "在支援 OAuth 的用戶端中新增伺服器 URL，然後登入 OpenWhispr 並授權存取。不需要 API 金鑰。",
       "apiKeyTitle": "使用 API 金鑰",
-      "apiKeyDescription": "對於支援請求標頭的用戶端，請建立具有所需權限的個人 API 金鑰，並使用以下標頭。"
+      "apiKeyDescription": "對於支援請求標頭的用戶端，請建立具有所需權限的個人 API 金鑰，並使用以下標頭。",
+      "localDescription": "讓 MCP 用戶端存取這台電腦上的筆記和轉錄。",
+      "localRequirements": "僅支援本機 stdio。連線期間請保持 OpenWhispr 執行。 暫不支援 AppImage，請使用安裝版。",
+      "localConfigTitle": "MCP 用戶端設定",
+      "localConfigDescription": "將此 JSON 合併至用戶端的 MCP 設定，儲存後重新啟動用戶端。",
+      "copyConfig": "複製設定",
+      "configLoadFailed": "無法載入本機 MCP 設定。"
     },
     "cli": {
       "description": "讓你的助理透過終端機存取你的筆記。",

@@ -16,6 +16,11 @@ const { resolveFailedGpuBackends } = require("./whisper");
 const { WHISPER_GPU_FAILURE_REASON_KEYS } = require("./whisperGpuFailureReason");
 const { BYOK_API_KEYS } = require("../config/secretKeys");
 const tokenStore = require("./tokenStore");
+const fork = require("../config/fork.json");
+const { resolveHostedApiUrl, resolveHostedAuthUrl } = require("./forkServiceConfig");
+const { createLocalConnectorProfile } = require("./connectors/localProfile");
+const { getLocalMcpConfig } = require("./localMcpConfig");
+const { createRetainedConnectorPolicyReader } = require("./connectors/retainedPolicy");
 const accountScopeBinding = require("./accountScopeBinding");
 const { createCloudApiRequestHandler } = require("./cloudApiRequest");
 const { decodeLeaderboardPngDataUrl, leaderboardImageFilename } = require("./leaderboardImage");
@@ -45,8 +50,9 @@ const {
 } = require("./providerHttpErrors");
 const {
   registerConnectorIpc,
-  createConnectorPolicyResolver,
-  createConnectorAuthLookup,
+  // createConnectorPolicyResolver,
+  // createConnectorAuthLookup,
+  createLocalConnectorPolicyResolver,
 } = require("./connectors/connectorIpc");
 const { createNoteAttendeesLookup, searchContacts } = require("./connectors/contactSearch");
 // The renderer's ModelRegistry is not main-loadable; the raw registry data is
@@ -643,6 +649,7 @@ class IPCHandlers {
   }
 
   _handleAuthTokenChange({ generation, token }) {
+    if (!fork.officialAccountEnabled) return;
     this.windowManager.retireMeetingNotificationScope();
     this.enterpriseIdentityManager?.clear();
     if (!token) {
@@ -650,7 +657,8 @@ class IPCHandlers {
       accountScopeBinding.clear();
       broadcastToWindows("active-account-scope-changed", null);
       // As set-active-account-scope does: a connect can't outlive its account.
-      this.connectorManager?.accountChanged();
+      // Local connector identity is independent of the retired cloud session.
+      // this.connectorManager?.accountChanged();
     }
     broadcastToWindows("auth-token-state-changed", {
       generation,
@@ -2226,6 +2234,11 @@ class IPCHandlers {
     });
 
     ipcMain.handle("set-active-account-scope", async (_event, accountId, expectedGeneration) => {
+      if (!fork.officialAccountEnabled) {
+        if (accountId !== null) return { success: false, code: "ACCOUNT_DISABLED" };
+        this.databaseManager.setActiveAccountId(null);
+        return { success: true };
+      }
       const state = tokenStore.getState();
       const verdict = accountScopeBinding.evaluateScopeRequest({
         accountId,
@@ -2260,21 +2273,24 @@ class IPCHandlers {
         "active-account-scope-changed",
         accountId !== null ? { accountId, authGeneration: state.generation } : null
       );
-      this.connectorManager?.accountChanged();
+      // this.connectorManager?.accountChanged(); // Connector profile does not follow cloud accounts.
       void this.connectorManager?.notifyStatusChanged();
       return { success: true };
     });
 
     ipcMain.handle("get-active-account-scope", () =>
-      accountScopeBinding.resolveActiveAccountScope({
-        ...tokenStore.getState(),
-        binding: accountScopeBinding.read(),
-      })
+      fork.officialAccountEnabled
+        ? accountScopeBinding.resolveActiveAccountScope({
+            ...tokenStore.getState(),
+            binding: accountScopeBinding.read(),
+          })
+        : null
     );
 
     ipcMain.handle(
       "delete-account-data",
       async (_event, accountId, expectedGeneration, options) => {
+        if (!fork.officialAccountEnabled) return { success: false, code: "ACCOUNT_DISABLED" };
         const state = tokenStore.getState();
         if (
           typeof accountId !== "string" ||
@@ -2293,9 +2309,10 @@ class IPCHandlers {
           // Erasing the device takes the calendar logins with it, so a grant
           // Gmail shares with a calendar is revoked too: cleanup-app runs
           // after this and finds no Gmail login left to revoke.
-          await this.connectorManager?.disconnectAll({
-            erasingDevice: options?.erasingDevice === true,
-          });
+          // Local connector logins belong to the device profile, not an old cloud account.
+          // await this.connectorManager?.disconnectAll({
+          //   erasingDevice: options?.erasingDevice === true,
+          // });
           const result = this.databaseManager.deleteAccountData(accountId);
           this.notifyVectorChanges();
           for (const noteId of result.deletedNoteIds) {
@@ -6105,6 +6122,8 @@ class IPCHandlers {
     });
 
     ipcMain.handle("auth-clear-session", async (event) => {
+      if (!fork.officialAccountEnabled)
+        return { success: true, tokenState: { success: true, token: null, generation: 0 } };
       try {
         const tokenState = tokenStore.clear();
         const win = BrowserWindow.fromWebContents(event.sender);
@@ -6122,9 +6141,15 @@ class IPCHandlers {
       }
     });
 
-    ipcMain.handle("auth-get-token", () => tokenStore.get());
-    ipcMain.handle("auth-get-token-state", () => tokenStore.getState());
+    // ipcMain.handle("auth-get-token", () => tokenStore.get());
+    // ipcMain.handle("auth-get-token-state", () => tokenStore.getState());
+    ipcMain.handle("auth-get-token", () => (fork.officialAccountEnabled ? tokenStore.get() : null));
+    ipcMain.handle("auth-get-token-state", () =>
+      fork.officialAccountEnabled ? tokenStore.getState() : { token: null, generation: 0 }
+    );
     ipcMain.handle("auth-set-token", (_event, token, expectedGeneration) => {
+      if (!fork.officialAccountEnabled)
+        return { success: false, code: "ACCOUNT_DISABLED", token: null, generation: 0 };
       if (typeof token !== "string" || !token) {
         // Surface silent rotation-to-empty so we can spot regressions where the
         // renderer thinks it's persisting a token but the value never lands.
@@ -6152,17 +6177,19 @@ class IPCHandlers {
       return {};
     })();
 
-    const getApiUrl = () =>
-      process.env.OPENWHISPR_API_URL ||
-      process.env.VITE_OPENWHISPR_API_URL ||
-      runtimeEnv.VITE_OPENWHISPR_API_URL ||
-      "";
+    const getApiUrl = () => resolveHostedApiUrl(process.env, runtimeEnv);
+    // const getApiUrl = () =>
+    //   process.env.OPENWHISPR_API_URL ||
+    //   process.env.VITE_OPENWHISPR_API_URL ||
+    //   runtimeEnv.VITE_OPENWHISPR_API_URL ||
+    //   "";
 
-    const getAuthUrl = () =>
-      process.env.AUTH_URL ||
-      process.env.VITE_AUTH_URL ||
-      runtimeEnv.VITE_AUTH_URL ||
-      "https://auth.openwhispr.com";
+    const getAuthUrl = () => resolveHostedAuthUrl(process.env, runtimeEnv);
+    // const getAuthUrl = () =>
+    //   process.env.AUTH_URL ||
+    //   process.env.VITE_AUTH_URL ||
+    //   runtimeEnv.VITE_AUTH_URL ||
+    //   "https://auth.openwhispr.com";
 
     const getSessionCookiesFromWindow = async (win) => {
       const scopedUrls = [getAuthUrl(), getApiUrl()].filter(Boolean);
@@ -6251,27 +6278,48 @@ class IPCHandlers {
       logger: debugLogger,
     });
     if (this.connectorManager) {
+      const localConnectorProfile = createLocalConnectorProfile({
+        dir: path.join(app.getPath("userData"), "connectors"),
+      });
+      const getRetainedConnectorPolicy = createRetainedConnectorPolicyReader({
+        cachePath: path.join(app.getPath("userData"), "workspace-policy.json"),
+        // Read only the origin needed to match an existing organization cache.
+        // Cloud requests continue using the disabled getApiUrl above.
+        getApiUrl: () =>
+          process.env.OPENWHISPR_API_URL ||
+          process.env.VITE_OPENWHISPR_API_URL ||
+          runtimeEnv.VITE_OPENWHISPR_API_URL ||
+          "",
+        getTokenState: () => tokenStore.getState(),
+        getAccountBinding: () => accountScopeBinding.read(),
+        getAppVersion: () => app.getVersion(),
+      });
       registerConnectorIpc({
         ipcMain,
         manager: this.connectorManager,
-        getPolicyState: createConnectorPolicyResolver({
-          getAuthHeader: createConnectorAuthLookup({
-            hasBearerToken: () => Boolean(tokenStore.get()),
-            windowFor: (event) => BrowserWindow.fromWebContents(event.sender),
-            authHeaderFor: getAuthHeaderFromWindow,
-          }),
-          getPolicy: (options) => workspacePolicyManager.getPolicy(options),
-          peekPolicy: (options) => workspacePolicyManager.peekPolicy(options),
-          getAuthGeneration: () => tokenStore.getState().generation,
+        getPolicyState: createLocalConnectorPolicyResolver({
+          getAccountScope: localConnectorProfile.getScope,
+          getPolicySnapshot: getRetainedConnectorPolicy,
         }),
+        // getPolicyState: createConnectorPolicyResolver({
+        //   getAuthHeader: createConnectorAuthLookup({
+        //     hasBearerToken: () => Boolean(tokenStore.get()),
+        //     windowFor: (event) => BrowserWindow.fromWebContents(event.sender),
+        //     authHeaderFor: getAuthHeaderFromWindow,
+        //   }),
+        //   getPolicy: (options) => workspacePolicyManager.getPolicy(options),
+        //   peekPolicy: (options) => workspacePolicyManager.peekPolicy(options),
+        //   getAuthGeneration: () => tokenStore.getState().generation,
+        // }),
         // The account bound to the credential in use, the same binding
         // get-active-account-scope serves (not the separately synced
         // database scope, which lags a sign-in or account switch).
-        getAccountScope: () =>
-          accountScopeBinding.resolveActiveAccountScope({
-            ...tokenStore.getState(),
-            binding: accountScopeBinding.read(),
-          }),
+        getAccountScope: localConnectorProfile.getScope,
+        // getAccountScope: () =>
+        //   accountScopeBinding.resolveActiveAccountScope({
+        //     ...tokenStore.getState(),
+        //     binding: accountScopeBinding.read(),
+        //   }),
         findContacts: (query) =>
           searchContacts(this.databaseManager.getContactLookupSources(), query),
         noteAttendees: createNoteAttendeesLookup({
@@ -6416,15 +6464,16 @@ class IPCHandlers {
         const multipartFields = {
           language: opts.language,
           prompt: opts.prompt,
-          sendLogs: opts.sendLogs,
+          // sendLogs: opts.sendLogs,
+          sendLogs: "false",
           clientType: "desktop",
-          appVersion: app.getVersion(),
-          clientVersion: app.getVersion(),
-          sessionId: this.sessionId,
+          // appVersion: app.getVersion(),
+          // clientVersion: app.getVersion(),
+          // sessionId: this.sessionId,
           clientTranscriptionId,
-          localDate: opts.localDate,
-          analyticsOccurredAt: opts.analyticsOccurredAt,
-          streamingFallbackReason: opts.streamingFallbackReason,
+          // localDate: opts.localDate,
+          // analyticsOccurredAt: opts.analyticsOccurredAt,
+          // streamingFallbackReason: opts.streamingFallbackReason,
           sttDetectedLanguage: opts.sttDetectedLanguage,
           sttDetectedLanguageConfidence: opts.sttDetectedLanguageConfidence,
           sttDetectedLanguageAudioSeconds: opts.sttDetectedLanguageAudioSeconds,
@@ -6665,8 +6714,9 @@ class IPCHandlers {
                 const multipartFields = {
                   language,
                   clientType: "desktop",
-                  appVersion: app.getVersion(),
-                  sessionId: this.sessionId,
+                  sendLogs: "false",
+                  // appVersion: app.getVersion(),
+                  // sessionId: this.sessionId,
                 };
                 if (buffer.length > CLOUD_INLINE_LIMIT) {
                   const { text } = await chunkedCloudTranscribe({
@@ -9701,14 +9751,14 @@ class IPCHandlers {
             screenContext: opts.screenContext,
             language: opts.language,
             locale: opts.locale,
-            sessionId: this.sessionId,
+            // sessionId: this.sessionId,
             clientType: "desktop",
-            appVersion: app.getVersion(),
-            clientVersion: app.getVersion(),
-            streamingFallbackReason: opts.streamingFallbackReason,
+            // appVersion: app.getVersion(),
+            // clientVersion: app.getVersion(),
+            // streamingFallbackReason: opts.streamingFallbackReason,
             sttProvider: opts.sttProvider,
             sttModel: opts.sttModel,
-            sttProcessingMs: opts.sttProcessingMs,
+            // sttProcessingMs: opts.sttProcessingMs,
             sttWordCount: opts.sttWordCount,
             sttLanguage: opts.sttLanguage,
             sttDetectedLanguage: opts.sttDetectedLanguage,
@@ -9716,9 +9766,9 @@ class IPCHandlers {
             sttDetectedLanguageAudioSeconds: opts.sttDetectedLanguageAudioSeconds,
             sttDetectedLanguageStatus: opts.sttDetectedLanguageStatus,
             audioDurationMs: opts.audioDurationMs,
-            audioSizeBytes: opts.audioSizeBytes,
-            audioFormat: opts.audioFormat,
-            clientTotalMs: opts.clientTotalMs,
+            // audioSizeBytes: opts.audioSizeBytes,
+            // audioFormat: opts.audioFormat,
+            // clientTotalMs: opts.clientTotalMs,
           }),
         });
 
@@ -9801,9 +9851,9 @@ class IPCHandlers {
             tools: opts.tools,
             ...(opts.screenContext ? { screenContext: opts.screenContext } : {}),
             ...(opts.noteChat ? { noteChat: true } : {}),
-            sessionId: this.sessionId,
+            // sessionId: this.sessionId,
             clientType: "desktop",
-            appVersion: app.getVersion(),
+            // appVersion: app.getVersion(),
           }),
           signal: controller.signal,
         });
@@ -9951,27 +10001,28 @@ class IPCHandlers {
             body: JSON.stringify({
               text,
               audioDurationSeconds,
-              sessionId: this.sessionId,
+              // sessionId: this.sessionId,
               clientType: "desktop",
-              appVersion: app.getVersion(),
-              clientVersion: app.getVersion(),
+              // appVersion: app.getVersion(),
+              // clientVersion: app.getVersion(),
               sttProvider: opts.sttProvider,
               sttModel: opts.sttModel,
-              sttProcessingMs: opts.sttProcessingMs,
+              // sttProcessingMs: opts.sttProcessingMs,
               sttLanguage: opts.sttLanguage,
               sttDetectedLanguage: opts.sttDetectedLanguage,
               sttDetectedLanguageConfidence: opts.sttDetectedLanguageConfidence,
               sttDetectedLanguageAudioSeconds: opts.sttDetectedLanguageAudioSeconds,
               sttDetectedLanguageStatus: opts.sttDetectedLanguageStatus,
-              audioSizeBytes: opts.audioSizeBytes,
-              audioFormat: opts.audioFormat,
-              clientTotalMs: opts.clientTotalMs,
-              sendLogs: opts.sendLogs,
+              // audioSizeBytes: opts.audioSizeBytes,
+              // audioFormat: opts.audioFormat,
+              // clientTotalMs: opts.clientTotalMs,
+              // sendLogs: opts.sendLogs,
+              sendLogs: false,
               clientTranscriptionId: opts.clientTranscriptionId,
-              localDate: opts.localDate,
-              analyticsOccurredAt: opts.analyticsOccurredAt,
-              analyticsWordCount: opts.analyticsWordCount,
-              analyticsCounterVersion: opts.analyticsCounterVersion,
+              // localDate: opts.localDate,
+              // analyticsOccurredAt: opts.analyticsOccurredAt,
+              // analyticsWordCount: opts.analyticsWordCount,
+              // analyticsCounterVersion: opts.analyticsCounterVersion,
             }),
           });
 
@@ -10188,9 +10239,10 @@ class IPCHandlers {
         const multipartFields = {
           source: "file_upload",
           clientType: "desktop",
-          appVersion: app.getVersion(),
-          clientVersion: app.getVersion(),
-          sessionId: this.sessionId,
+          sendLogs: "false",
+          // appVersion: app.getVersion(),
+          // clientVersion: app.getVersion(),
+          // sessionId: this.sessionId,
         };
 
         const fileSize = fs.statSync(realCloud).size;
@@ -10852,6 +10904,10 @@ class IPCHandlers {
     ipcMain.handle("get-app-version", async () => {
       return this.updateManager.getAppVersion();
     });
+
+    ipcMain.handle("get-local-mcp-config", () =>
+      getLocalMcpConfig({ appPath: app.getAppPath() })
+    );
 
     ipcMain.handle("get-post-migration-state", () => ({
       justMigrated: postMigrationDetector.isReturningFromOldBundle(),

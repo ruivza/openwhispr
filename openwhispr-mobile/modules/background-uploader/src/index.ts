@@ -1,5 +1,6 @@
 import { requireNativeModule } from 'expo';
 import { Platform } from 'react-native';
+import { isOfficialHostedUrl, requireHostedServices } from '../../../src/lib/fork';
 
 export interface BackgroundUploadOptions {
   url: string;
@@ -74,6 +75,7 @@ export const BackgroundUploader = {
   },
 
   async requestProvider(options: ProviderRequestOptions): Promise<ProviderRequestResult> {
+    if (isOfficialHostedUrl(options.url)) requireHostedServices();
     if (!NativeModule?.requestProvider)
       throw Object.assign(new Error('Provider requests require an updated iOS native build'), {
         code: 'PROVIDER_TRANSPORT_UNAVAILABLE',
@@ -90,6 +92,7 @@ export const BackgroundUploader = {
   },
 
   async upload(options: BackgroundUploadOptions): Promise<BackgroundUploadResult> {
+    requireHostedServices();
     if (!NativeModule) {
       throw new Error('BackgroundUploader is only available on iOS');
     }

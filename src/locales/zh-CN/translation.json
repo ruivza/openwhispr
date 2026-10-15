@@ -3954,7 +3954,13 @@
       "oauthTitle": "通过 OAuth 登录",
       "oauthDescription": "在支持 OAuth 的客户端中添加服务器 URL，然后登录 OpenWhispr 并授权访问。无需 API 密钥。",
       "apiKeyTitle": "使用 API 密钥",
-      "apiKeyDescription": "对于支持请求标头的客户端，请创建具有所需权限的个人 API 密钥，并使用以下标头。"
+      "apiKeyDescription": "对于支持请求标头的客户端，请创建具有所需权限的个人 API 密钥，并使用以下标头。",
+      "localDescription": "让 MCP 客户端访问这台电脑上的笔记和转录。",
+      "localRequirements": "仅支持本机 stdio。连接期间请保持 OpenWhispr 运行。 暂不支持 AppImage，请使用安装版。",
+      "localConfigTitle": "MCP 客户端配置",
+      "localConfigDescription": "将此 JSON 合并到客户端的 MCP 设置中，保存后重启客户端。",
+      "copyConfig": "复制配置",
+      "configLoadFailed": "无法加载本机 MCP 配置。"
     },
     "cli": {
       "description": "让你的助手通过终端访问你的笔记。",

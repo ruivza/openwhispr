@@ -101,6 +101,18 @@ function withBrandFonts(plugins) {
   );
 }
 
+function withoutTelemetryPlugins(plugins) {
+  // Keep the original declarations in app.base.json, but do not run their native/build hooks.
+  const disabledPlugins = new Set([
+    '@sentry/react-native/expo',
+    'react-native-appsflyer',
+    'expo-tracking-transparency',
+  ]);
+  return plugins.filter(
+    (plugin) => !disabledPlugins.has(Array.isArray(plugin) ? plugin[0] : plugin),
+  );
+}
+
 function createGoogleCalendarConfig(environment) {
   const devClientId = firstNonEmpty(process.env.EXPO_PUBLIC_GOOGLE_CALENDAR_IOS_CLIENT_ID_DEV);
   const prodClientId = firstNonEmpty(process.env.EXPO_PUBLIC_GOOGLE_CALENDAR_IOS_CLIENT_ID);
@@ -115,16 +127,35 @@ function createGoogleCalendarConfig(environment) {
 module.exports = () => {
   const environment = resolveOpenWhisprEnvironment();
   const expo = clone(baseConfig.expo);
+  const unsignedIosBuild = process.env.OPENWHISPR_UNSIGNED_IOS_BUILD === '1';
+  if (unsignedIosBuild) {
+    const bundleId = environment.iosBundleIdentifier;
+    if (
+      !/^[A-Za-z][A-Za-z0-9-]*(?:\.[A-Za-z0-9-]+)+$/.test(bundleId) ||
+      /^com\.gizmolabs\.openwhispr(?:\.|$)/i.test(bundleId) ||
+      environment.keyboardBundleIdentifier !== `${bundleId}.keyboard` ||
+      environment.appGroupId !== `group.${bundleId}`
+    ) {
+      throw new Error(
+        'Unsigned iOS builds require your own bundle identifier and matching extensions/App Group.',
+      );
+    }
+  }
   const iosInfoPlist = expo.ios?.infoPlist ?? {};
   const iosQueries = iosInfoPlist.LSApplicationQueriesSchemes ?? [];
   const googleCalendar = createGoogleCalendarConfig(environment);
 
   return {
     ...expo,
+    // Original official EAS URL/project metadata remains in app.base.json.
+    // An EAS OTA feed cannot be redirected to the desktop GitHub updater.
+    updates: { ...expo.updates, enabled: false, checkAutomatically: 'NEVER' },
     name: expo.name,
     scheme: singleOrMany([environment.scheme, googleCalendar.iosRedirectScheme]),
     ios: {
       ...expo.ios,
+      // Keep the upstream team in app.base.json; unsigned fork builds use no team.
+      ...(unsignedIosBuild ? { appleTeamId: undefined } : {}),
       bundleIdentifier: environment.iosBundleIdentifier,
       entitlements: {
         ...(expo.ios?.entitlements ?? {}),
@@ -145,7 +176,8 @@ module.exports = () => {
       ...expo.android,
       package: environment.androidPackage,
     },
-    plugins: withBrandFonts(expo.plugins),
+    // plugins: withBrandFonts(expo.plugins),
+    plugins: withBrandFonts(withoutTelemetryPlugins(expo.plugins)),
     extra: {
       ...expo.extra,
       openWhispr: {

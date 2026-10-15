@@ -1,4 +1,5 @@
-import * as Sentry from '@sentry/react-native';
+// import * as Sentry from '@sentry/react-native';
+import { Sentry } from '@/lib/sentry';
 import { notesRepository } from '@/data';
 
 // A park is a normal, self-healing outcome the first time or two: the space or

@@ -74,8 +74,10 @@ test("Gmail reads its Google client from deps.env lazily, not at build time", as
 
   assert.equal((await gmail.getStatus()).configured, false);
 
-  env.GOOGLE_CALENDAR_CLIENT_ID = "client-id";
-  env.GOOGLE_CALENDAR_CLIENT_SECRET = "secret";
+  // env.GOOGLE_CALENDAR_CLIENT_ID = "client-id";
+  env.CONNECTOR_GMAIL_CLIENT_ID = "client-id";
+  // env.GOOGLE_CALENDAR_CLIENT_SECRET = "secret";
+  env.CONNECTOR_GMAIL_CLIENT_SECRET = "secret";
 
   assert.equal((await gmail.getStatus()).configured, true);
 });
@@ -100,7 +102,9 @@ test("Slack reads its client id from deps.env lazily, not at build time", async 
   await assert.rejects(slack.authorize(), { code: "not_configured" });
   assert.deepEqual(authUrls, [], "no browser opens without a client id");
 
-  env.SLACK_CLIENT_ID = "slack-client";
+  // env.SLACK_CLIENT_ID = "slack-client";
+  env.CONNECTOR_SLACK_CLIENT_ID = "slack-client";
+  env.CONNECTOR_SLACK_OAUTH_REDIRECT_URI = "https://relay.example.test/slack/callback";
   await assert.rejects(slack.authorize(), /no browser in tests/);
   assert.equal(new URL(authUrls[0]).searchParams.get("client_id"), "slack-client");
 });

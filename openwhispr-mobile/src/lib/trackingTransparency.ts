@@ -1,3 +1,17 @@
+// Telemetry disabled in this build. Original implementation retained below.
+export type TrackingAuthorizationStatus =
+  'authorized' | 'denied' | 'notDetermined' | 'notSupported';
+
+// Attribution is disabled, so never read or request the native tracking permission.
+export async function getTrackingAuthorizationStatus(): Promise<TrackingAuthorizationStatus> {
+  return 'notSupported';
+}
+
+export async function requestTrackingAuthorization(): Promise<TrackingAuthorizationStatus> {
+  return 'notSupported';
+}
+
+/*
 import { Platform } from 'react-native';
 import {
   getTrackingPermissionsAsync,
@@ -31,3 +45,4 @@ export async function requestTrackingAuthorization(): Promise<TrackingAuthorizat
   const response = await requestTrackingPermissionsAsync();
   return mapPermissionStatus(response.status);
 }
+*/

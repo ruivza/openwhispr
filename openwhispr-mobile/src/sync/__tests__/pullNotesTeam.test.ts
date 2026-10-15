@@ -1,3 +1,5 @@
+// Business tests spy on the local diagnostic adapter; its no-op behavior is tested separately.
+jest.mock('@/lib/sentry', () => ({ Sentry: jest.requireMock('@sentry/react-native') }));
 jest.mock('@sentry/react-native', () => ({
   addBreadcrumb: jest.fn(),
   captureMessage: jest.fn(),
@@ -23,7 +25,8 @@ jest.mock('@/data/remote/notesApi', () => ({
   fetchNotes: jest.fn(),
 }));
 
-import * as Sentry from '@sentry/react-native';
+// import * as Sentry from '@sentry/react-native';
+import { Sentry } from '@/lib/sentry';
 import { pullNotesTeam } from '../pullNotesTeam';
 import { notesRepository, spacesRepository } from '@/data';
 import { fetchNotes } from '@/data/remote/notesApi';

@@ -2231,6 +2231,15 @@ declare global {
       downloadUpdate: () => Promise<UpdateResult>;
       installUpdate: () => Promise<UpdateResult>;
       getAppVersion: () => Promise<AppVersionResult>;
+      getLocalMcpConfig: () => Promise<{
+        mcpServers: {
+          openwhispr: {
+            command: string;
+            args: string[];
+            env: { ELECTRON_RUN_AS_NODE: "1" };
+          };
+        };
+      }>;
       getPostMigrationState: () => Promise<{ justMigrated: boolean }>;
       getOAuthProtocolRegistered: () => Promise<boolean>;
       getOAuthProtocol: () => Promise<string>;

@@ -4006,7 +4006,13 @@
       "oauthTitle": "Iniciar sesión con OAuth",
       "oauthDescription": "En un cliente compatible con OAuth, añade la URL del servidor, inicia sesión en OpenWhispr y autoriza el acceso. No necesitas una clave API.",
       "apiKeyTitle": "Usar una clave API",
-      "apiKeyDescription": "Para clientes que acepten encabezados de solicitud, crea una clave API personal con los permisos necesarios y usa el encabezado siguiente."
+      "apiKeyDescription": "Para clientes que acepten encabezados de solicitud, crea una clave API personal con los permisos necesarios y usa el encabezado siguiente.",
+      "localDescription": "Conecta un cliente MCP a las notas y transcripciones de este equipo.",
+      "localRequirements": "Solo stdio local. Mantén OpenWhispr abierto mientras esté conectado. AppImage aún no es compatible; usa una versión instalada.",
+      "localConfigTitle": "Configuración del cliente MCP",
+      "localConfigDescription": "Integra este JSON en los ajustes MCP de tu cliente y reinicia el cliente después de guardar.",
+      "copyConfig": "Copiar configuración",
+      "configLoadFailed": "No se pudo cargar la configuración MCP local."
     },
     "cli": {
       "description": "Dale a tu asistente acceso a tus notas desde la terminal.",

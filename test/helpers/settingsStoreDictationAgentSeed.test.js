@@ -11,6 +11,10 @@ test("the Voice Assistant scope is seeded from Chat once for profiles that never
   const { storage } = installBrowserGlobals(t);
   const vite = await createRendererServer(t, {
     cachePrefix: "openwhispr-dictation-agent-seed-test-",
+    // Exercise the retained original migration contract independently of fork defaults.
+    mockModules: {
+      "/config/fork.json": '{"officialAccountEnabled":true,"hostedServicesEnabled":true}',
+    },
   });
   const load = async (seed) => {
     storage.clear();

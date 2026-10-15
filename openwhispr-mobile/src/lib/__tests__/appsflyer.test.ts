@@ -1,3 +1,80 @@
+const mockSdkLoaded = jest.fn();
+const mockInit = jest.fn();
+const mockStart = jest.fn();
+const mockStop = jest.fn();
+const mockLogEvent = jest.fn();
+const mockEnableDebug = jest.fn();
+const mockRegisterSessionReadyListener = jest.fn();
+const mockSubscribe = jest.fn();
+const mockGetConfig = jest.fn(() => ({
+  config: { defaultMode: 'cloud', usageAnalyticsEnabled: true },
+}));
+const mockGetTrackingStatus = jest.fn(() => Promise.resolve('authorized'));
+
+jest.mock('react-native-appsflyer', () => {
+  mockSdkLoaded();
+  return {
+    __esModule: true,
+    default: {
+      init: mockInit,
+      start: mockStart,
+      stop: mockStop,
+      logEvent: mockLogEvent,
+      enableDebug: mockEnableDebug,
+      registerSessionReadyListener: mockRegisterSessionReadyListener,
+    },
+  };
+});
+jest.mock('@/store/useConfigStore', () => ({
+  useConfigStore: { getState: mockGetConfig, subscribe: mockSubscribe },
+}));
+jest.mock('@/lib/trackingTransparency', () => ({
+  getTrackingAuthorizationStatus: mockGetTrackingStatus,
+}));
+
+const originalDevKey = process.env.EXPO_PUBLIC_APPSFLYER_DEV_KEY;
+beforeEach(() => {
+  jest.resetModules();
+  jest.clearAllMocks();
+  process.env.EXPO_PUBLIC_APPSFLYER_DEV_KEY = 'synthetic-test-key';
+});
+afterAll(() => {
+  if (originalDevKey === undefined) delete process.env.EXPO_PUBLIC_APPSFLYER_DEV_KEY;
+  else process.env.EXPO_PUBLIC_APPSFLYER_DEV_KEY = originalDevKey;
+});
+
+it('never starts attribution after startup, ATT approval, or foreground refresh', async () => {
+  const appsFlyer = require('../appsflyer') as typeof import('../appsflyer');
+  appsFlyer.initAppsFlyer();
+  appsFlyer.initAppsFlyer();
+  appsFlyer.setAppsFlyerTrackingAuthorizationStatus('authorized');
+  await appsFlyer.refreshAppsFlyerTrackingAuthorization();
+  expect(mockSdkLoaded).not.toHaveBeenCalled();
+  expect(mockInit).not.toHaveBeenCalled();
+  expect(mockStart).not.toHaveBeenCalled();
+  expect(mockStop).not.toHaveBeenCalled();
+  expect(mockEnableDebug).not.toHaveBeenCalled();
+  expect(mockRegisterSessionReadyListener).not.toHaveBeenCalled();
+  expect(mockGetConfig).not.toHaveBeenCalled();
+  expect(mockSubscribe).not.toHaveBeenCalled();
+  expect(mockGetTrackingStatus).not.toHaveBeenCalled();
+});
+
+it('discards generic and product events even with configured SDK credentials', async () => {
+  const appsFlyer = require('../appsflyer') as typeof import('../appsflyer');
+  appsFlyer.logAppsFlyerEvent('synthetic_event', { synthetic: true });
+  appsFlyer.logTutorialCompletion({ keyboardInstalled: true, microphonePermissionGranted: true });
+  appsFlyer.logTranscriptionCompleted({ source: 'keyboard', provider: 'cloud' });
+  appsFlyer.logPaywallViewed('account_billing_open');
+  appsFlyer.logSubscription('synthetic.monthly', 'account_billing_open');
+  appsFlyer.initAppsFlyer();
+  await appsFlyer.refreshAppsFlyerTrackingAuthorization();
+  expect(mockSdkLoaded).not.toHaveBeenCalled();
+  expect(mockLogEvent).not.toHaveBeenCalled();
+});
+
+// Original telemetry expectations retained while this build disables collection.
+/*
 import type { UserConfig } from '@/types';
 import type { TrackingAuthorizationStatus } from '@/lib/trackingTransparency';
 
@@ -759,3 +836,4 @@ describe('AppsFlyer MVP events', () => {
     );
   });
 });
+*/

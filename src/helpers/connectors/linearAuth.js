@@ -7,6 +7,7 @@
 const { describeError } = require("./errorSummary");
 const { createBoundLogin } = require("./boundLogin");
 const { LINEAR_AUTHORIZE_URL } = require("./linearApi");
+const { ownRelayRedirectUri } = require("./localOAuthConfig");
 
 // Least privilege (spec §2): read, create issues, create comments. Never
 // `write` or `admin`. The authorize URL takes this comma-separated list,
@@ -30,18 +31,20 @@ const LINEAR_LOOPBACK = {
 // can't be registered. Linear redirects to the openwhispr.com relay instead,
 // which forwards the browser to the loopback server by the port in state
 // (connector spec §7.2, as for Slack).
-const LINEAR_RELAY_REDIRECT_URI = "https://openwhispr.com/auth/linear/callback";
+const LINEAR_RELAY_REDIRECT_URI = null;
+// const LINEAR_RELAY_REDIRECT_URI = "https://openwhispr.com/auth/linear/callback";
 
 // LINEAR_OAUTH_REDIRECT_URI points a dev build at a website preview of the
 // relay. Only an https: URL is accepted; anything else uses the real relay.
 function linearRedirectUri(env) {
-  const override = env?.LINEAR_OAUTH_REDIRECT_URI;
-  if (typeof override !== "string" || !override) return LINEAR_RELAY_REDIRECT_URI;
-  try {
-    return new URL(override).protocol === "https:" ? override : LINEAR_RELAY_REDIRECT_URI;
-  } catch {
-    return LINEAR_RELAY_REDIRECT_URI;
-  }
+  return ownRelayRedirectUri(env?.CONNECTOR_LINEAR_OAUTH_REDIRECT_URI);
+  // const override = env?.LINEAR_OAUTH_REDIRECT_URI;
+  // if (typeof override !== "string" || !override) return LINEAR_RELAY_REDIRECT_URI;
+  // try {
+  //   return new URL(override).protocol === "https:" ? override : LINEAR_RELAY_REDIRECT_URI;
+  // } catch {
+  //   return LINEAR_RELAY_REDIRECT_URI;
+  // }
 }
 // Checked live: `prompt=consent` shows Linear's consent screen every time, so the
 // user picks the workspace instead of reusing the last one silently.
@@ -131,6 +134,7 @@ function createLinearAuth({
   loopback = LINEAR_LOOPBACK,
   // An https relay URL, or null to redirect to the loopback.
   redirectUri = null,
+  getRedirectUri = () => redirectUri,
   renderResultPage = null,
   // Optional: told about failures worth a log line via
   // logger.warn(message, { errorName, errorCode }, area). Never a token,
@@ -184,7 +188,8 @@ function createLinearAuth({
     return runOAuthLoopbackFlow({
       errorParam: "linear_error",
       ...loopback,
-      publicRedirectUri: redirectUri,
+      publicRedirectUri: getRedirectUri(),
+      // publicRedirectUri: redirectUri,
       renderResultPage,
       signal,
       buildAuthUrl: (callbackUri, state, codeChallenge) => {

@@ -31,9 +31,12 @@ class UpdateManager {
       return;
     }
 
+    // Upstream feed (also the original electron-builder.json publish value):
+    // autoUpdater.setFeedURL({ provider: "github", owner: "OpenWhispr", repo: "openwhispr", private: false });
+    // A fork must never fall back to upstream: that would replace local changes.
     autoUpdater.setFeedURL({
       provider: "github",
-      owner: "OpenWhispr",
+      owner: "ruivza",
       repo: "openwhispr",
       private: false,
     });

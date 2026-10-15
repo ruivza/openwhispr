@@ -16,10 +16,12 @@ import {
   isWebSearchBlockedByOrg,
 } from "../../stores/policyRules";
 import { usePolicyStore } from "../../stores/policyStore";
+import fork from "../../config/fork.json";
 import { useAuth } from "../../hooks/useAuth";
-import { getUsageState } from "../../lib/usageStore";
-import { readIsSubscribed } from "../../lib/subscriptionFlag";
-import { hasConnectorPlan } from "../../utils/connectorEligibility";
+// import { getUsageState } from "../../lib/usageStore";
+// import { readIsSubscribed } from "../../lib/subscriptionFlag";
+// import { hasConnectorPlan } from "../../utils/connectorEligibility";
+import { canUseLocalConnectors } from "../../utils/connectorEligibility";
 import { gmailSendStatus, resolveEmailDraftTarget } from "../../utils/emailDraftTarget";
 import {
   ensureConnectorStatus,
@@ -414,14 +416,17 @@ export function useChatStreaming({
         // so any connected provider enables it.
         const calendarConnected =
           settings.gcalConnected || settings.mcalConnected || settings.appleCalendarConnected;
-        const webSearchEnabled = isWebSearchAllowed(policy);
-        const connectorPlan = hasConnectorPlan(getUsageState(), readIsSubscribed());
+        // const webSearchEnabled = isWebSearchAllowed(policy);
+        const webSearchEnabled = fork.hostedServicesEnabled && isWebSearchAllowed(policy);
+        // const connectorPlan = hasConnectorPlan(getUsageState(), readIsSubscribed());
+        const localConnectorsAvailable = canUseLocalConnectors();
         let registry: ToolRegistry | null = null;
         let connectorsOffered = false;
         if (supportsTools) {
           const scopeKey = scope ? `${scope.spaceId}:${scope.folderId ?? ""}` : "";
           const connectorsAvailable =
-            allowConnectors && settings.isSignedIn && connectorPlan && isConnectorsAllowed(policy);
+            // allowConnectors && settings.isSignedIn && connectorPlan && isConnectorsAllowed(policy);
+            allowConnectors && localConnectorsAvailable && isConnectorsAllowed(policy);
           // The first send in a window must not miss a connector that is already connected.
           if (connectorsAvailable) await ensureConnectorStatus();
           const connectors = connectorsAvailable
@@ -470,7 +475,8 @@ export function useChatStreaming({
           calendarConnected,
           connectors: allowConnectors
             ? {
-                hasPlan: connectorPlan,
+                // hasPlan: connectorPlan,
+                available: localConnectorsAvailable,
                 allowed: isConnectorsAllowed(policy),
                 blockedByOrg: isConnectorsBlockedByOrg(policy),
                 statuses: useConnectorStatusStore.getState().statuses,

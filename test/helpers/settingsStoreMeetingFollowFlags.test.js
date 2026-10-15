@@ -64,6 +64,10 @@ const meetingRoute = (mod, state) => {
 test("Note Recording modes survive the follow-flag migration", async (t) => {
   const { storage } = installBrowserGlobals(t);
   const vite = await createRendererServer(t, {
+    // Exercise the retained original migration contract independently of fork defaults.
+    mockModules: {
+      "/config/fork.json": '{"officialAccountEnabled":true,"hostedServicesEnabled":true}',
+    },
     cachePrefix: "openwhispr-meeting-follow-flags-test-",
   });
 

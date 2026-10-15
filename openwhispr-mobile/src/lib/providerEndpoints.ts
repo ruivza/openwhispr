@@ -1,3 +1,5 @@
+import { isOfficialHostedUrl } from './fork';
+
 // Require a real dotted-quad before applying IPv4 private-range checks so
 // public DNS names like "127.example.com" / "10.example.com" cannot bypass
 // the HTTPS requirement via string-prefix matching.
@@ -49,6 +51,7 @@ function isPrivateHost(hostname: string): boolean {
 
 export function isSecureHttpEndpoint(url: string): boolean {
   try {
+    if (isOfficialHostedUrl(url)) return false;
     const parsed = new URL(url);
     return (
       parsed.protocol === 'https:' ||

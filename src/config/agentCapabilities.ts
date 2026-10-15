@@ -3,6 +3,7 @@
  * system prompt so the model tells the user how to turn a capability on
  * instead of claiming it's impossible (or attempting it without a tool).
  */
+import forkConfig from "./fork.json" with { type: "json" };
 
 export type UnavailableReason =
   | "signedOut"
@@ -11,6 +12,7 @@ export type UnavailableReason =
   | "planRequired"
   | "notConnected"
   | "needsReconnect"
+  | "notConfigured"
   | "modelTooSmall";
 
 export interface UnavailableCapability {
@@ -45,7 +47,8 @@ export interface UnavailableCapabilityInput {
   calendarConnected: boolean;
   /** Omitted on surfaces that never offer connectors (container chat, onboarding demo). */
   connectors?: {
-    hasPlan: boolean;
+    available: boolean;
+    // hasPlan: boolean;
     allowed: boolean;
     blockedByOrg: boolean;
     statuses: Readonly<Record<string, ConnectorAvailability>>;
@@ -81,7 +84,11 @@ export function resolveUnavailableCapabilities(
 
   const unavailable: UnavailableCapability[] = [];
 
-  if (!input.isSignedIn) {
+  if (input.webSearch.blockedByOrg) {
+    unavailable.push({ name: "Web search", reason: "policyOff" });
+  } else if (!forkConfig.hostedServicesEnabled) {
+    unavailable.push({ name: "Web search", reason: "notConfigured" });
+  } else if (!input.isSignedIn) {
     unavailable.push({ name: "Web search", reason: "signedOut", where: locations.account });
   } else if (!input.webSearch.allowed) {
     unavailable.push({
@@ -102,21 +109,32 @@ export function resolveUnavailableCapabilities(
     unavailable.push({ name, reason, ...(where ? { where } : {}), delivers: true });
   };
 
-  if (!input.isSignedIn) {
-    unavailableConnector(CONNECTORS_NAME, "signedOut", locations.account);
-  } else if (connectors.blockedByOrg) {
+  // if (!input.isSignedIn) {
+  //   unavailableConnector(CONNECTORS_NAME, "signedOut", locations.account);
+  // } else if (connectors.blockedByOrg) {
+  if (connectors.blockedByOrg) {
+    // An organization refusal still takes precedence over local configuration.
     // Before the plan: paying wouldn't help while the organization keeps them off.
     unavailableConnector(CONNECTORS_NAME, "policyOff");
-  } else if (!connectors.hasPlan) {
-    unavailableConnector(CONNECTORS_NAME, "planRequired", locations.plans);
+  } else if (!connectors.available) {
+    unavailableConnector(CONNECTORS_NAME, "notConfigured", locations.connectors);
+    // } else if (!connectors.hasPlan) {
+    //   unavailableConnector(CONNECTORS_NAME, "planRequired", locations.plans);
   } else if (!connectors.allowed) {
     unavailableConnector(CONNECTORS_NAME, "policyLoading");
   } else {
     for (const id of CONNECTED_ONE_BY_ONE) {
       const status = connectors.statuses[id];
+      // Unknown (status not loaded) says nothing. Missing OAuth configuration
+      // must be explained separately from a disconnected third-party account.
       // Unknown (status not loaded) says nothing; a build without the
       // provider's client hides its row, so there's nothing to connect.
-      if (!status || status.configured === false) continue;
+      if (!status) continue;
+      if (status.configured === false) {
+        unavailableConnector(CONNECTOR_NAMES[id], "notConfigured", locations.connectors);
+        continue;
+      }
+      // if (!status || status.configured === false) continue;
       if (!status.connected) {
         unavailableConnector(CONNECTOR_NAMES[id], "notConnected", locations.connectors);
       } else if (status.needsReconnect) {
@@ -143,6 +161,8 @@ function describeOne({ name, reason, where }: UnavailableCapability): string {
       return `${name}: not connected; the user can connect it${at}.`;
     case "needsReconnect":
       return `${name}: the connection has expired; the user can reconnect it${at}.`;
+    case "notConfigured":
+      return `${name}: not configured; this build needs the user's own service configuration${at}.`;
     case "modelTooSmall":
       return `${name}: the selected model runs without tools (small or unrecognized local models do); the user can choose a larger model or a cloud provider${at}. You can still use anything already in this prompt, such as note text, and write any text the user asks for.`;
   }

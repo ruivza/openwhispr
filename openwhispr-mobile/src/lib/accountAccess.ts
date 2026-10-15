@@ -5,6 +5,7 @@ import { useAuthStore } from '@/store/useAuthStore';
 import { useProcessingModeStore } from '@/store/useProcessingModeStore';
 import type { AuthUser } from '@/lib/authClient';
 import type { ProcessingMode } from '@/types';
+import { HOSTED_SERVICES_MESSAGE } from './fork';
 
 // Deliberately `!user`, not requiresRealAccount: cloud transcription is exactly
 // what an anonymous onboarding session exists to do, and the API leaves
@@ -35,20 +36,29 @@ export function canRunCloudMeeting(user: AuthUser | null, mode: ProcessingMode):
 }
 
 export function getCloudAccountRequiredMessage(feature: string, anonymous = false): string {
+  return HOSTED_SERVICES_MESSAGE;
+  /* Original official sign-in guidance retained.
   const action = `${anonymous ? 'Create an account' : 'Sign in'} to use ${feature} with cloud processing`;
   // Already in Private Mode, which is what turning it off asks Cloud for, so don't offer it back.
   return useProcessingModeStore.getState().activeMode === 'private'
     ? `${action}.`
     : `${action}, or turn on Private Mode in Account → AI Models.`;
+  */
 }
 
 // For features with no local model (AI actions, AI chat): Private Mode is not
 // an alternative, so don't suggest it as one.
 export function getCloudOnlyAccountRequiredMessage(feature: string, anonymous = false): string {
-  return `${anonymous ? 'Create an account' : 'Sign in'} to use ${feature}. This feature always uses cloud AI, even in Private Mode.`;
+  // return `${anonymous ? 'Create an account' : 'Sign in'} to use ${feature}. This feature always uses cloud AI, even in Private Mode.`;
+  return HOSTED_SERVICES_MESSAGE;
 }
 
 export function showAccountRequiredAlert(feature: string, options?: { cloudOnly?: boolean }): void {
+  Alert.alert('Feature unavailable', HOSTED_SERVICES_MESSAGE, [
+    { text: 'Cancel', style: 'cancel' },
+    { text: 'AI Models', onPress: () => router.push('/(account)/ai-models') },
+  ]);
+  /* Original official account/registration prompt retained.
   // An anonymous onboarding session already has a user; what it lacks is an
   // account, and the Account screen has nothing to offer it. Send it straight
   // to sign-up instead of a screen whose only action would be Sign Out.
@@ -62,6 +72,7 @@ export function showAccountRequiredAlert(feature: string, options?: { cloudOnly?
       ? { text: 'Create Account', onPress: () => router.push('/auth') }
       : { text: 'Account', onPress: () => router.push('/(account)') },
   ]);
+  */
 }
 
 /**

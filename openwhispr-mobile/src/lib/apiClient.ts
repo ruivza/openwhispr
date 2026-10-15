@@ -3,6 +3,7 @@ import Constants from 'expo-constants';
 import { useAuthStore } from '@/store/useAuthStore';
 import { parseApiErrorBody } from '@/lib/apiErrorBody';
 import { UPGRADE_REQUIRED_MESSAGE } from './policyMessages';
+import { requireHostedServices } from './fork';
 
 // Re-exported so existing consumers (e.g. AgentStreamClient.ts, which already
 // imports from this module) can keep pulling it from one place; the
@@ -82,6 +83,7 @@ export function isPolicyCloudBackupBlockedError(error: unknown): boolean {
 }
 
 export async function apiRequest<T>(path: string, options: FetchOptions = {}): Promise<T> {
+  requireHostedServices();
   const { authenticated = true, ...fetchOptions } = options;
 
   const headers: Record<string, string> = {

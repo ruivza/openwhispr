@@ -1,4 +1,5 @@
 const { createBoundLogin } = require("./boundLogin");
+const { ownRelayRedirectUri } = require("./localOAuthConfig");
 
 const SLACK_AUTHORIZE_URL = "https://slack.com/oauth/v2/authorize";
 const SLACK_USER_SCOPES = [
@@ -16,19 +17,21 @@ const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 // to the openwhispr.com relay, which forwards to this loopback server by the
 // port in state (spec §7.2). A first Slack sign-in (workspace choice, 2FA)
 // can outlast the calendars' 120 s, so the flow waits 5 minutes.
-const SLACK_RELAY_REDIRECT_URI = "https://openwhispr.com/auth/slack/callback";
+const SLACK_RELAY_REDIRECT_URI = null;
+// const SLACK_RELAY_REDIRECT_URI = "https://openwhispr.com/auth/slack/callback";
 const SLACK_LOOPBACK = { ports: [0], callbackPath: "/slack/callback", timeoutMs: 5 * 60 * 1000 };
 
 // SLACK_OAUTH_REDIRECT_URI points a dev build at a website preview of the
 // relay. Only an https: URL is accepted; anything else uses the real relay.
 function slackRedirectUri(env) {
-  const override = env?.SLACK_OAUTH_REDIRECT_URI;
-  if (typeof override !== "string" || !override) return SLACK_RELAY_REDIRECT_URI;
-  try {
-    return new URL(override).protocol === "https:" ? override : SLACK_RELAY_REDIRECT_URI;
-  } catch {
-    return SLACK_RELAY_REDIRECT_URI;
-  }
+  return ownRelayRedirectUri(env?.CONNECTOR_SLACK_OAUTH_REDIRECT_URI);
+  // const override = env?.SLACK_OAUTH_REDIRECT_URI;
+  // if (typeof override !== "string" || !override) return SLACK_RELAY_REDIRECT_URI;
+  // try {
+  //   return new URL(override).protocol === "https:" ? override : SLACK_RELAY_REDIRECT_URI;
+  // } catch {
+  //   return SLACK_RELAY_REDIRECT_URI;
+  // }
 }
 // oauth.v2.access errors that mean the login itself is gone. Rate limits,
 // service_unavailable, internal_error and every other error keep the login:
@@ -82,6 +85,7 @@ function createSlackAuth({
   OAuthFlowError,
   loopback = SLACK_LOOPBACK,
   redirectUri = slackRedirectUri(process.env),
+  getRedirectUri = () => redirectUri,
   renderResultPage = null,
   // Optional: told about a credential write that failed for a reason other
   // than a reconnect/disconnect race (disk, permission, encryption errors
@@ -93,12 +97,15 @@ function createSlackAuth({
   // `signal` gives the sign-in up when a newer Connect replaces it.
   function authorize({ signal } = {}) {
     const clientId = getClientId();
+    const publicRedirectUri = ownRelayRedirectUri(getRedirectUri());
     // Fail before opening a browser on a client_id-less URL.
-    if (!clientId) return Promise.reject(codedError("not_configured"));
+    if (!clientId || !publicRedirectUri) return Promise.reject(codedError("not_configured"));
+    // if (!clientId) return Promise.reject(codedError("not_configured"));
     return runOAuthLoopbackFlow({
       errorParam: "slack_error",
       ...loopback,
-      publicRedirectUri: redirectUri,
+      publicRedirectUri,
+      // publicRedirectUri: redirectUri,
       renderResultPage,
       signal,
       buildAuthUrl: (redirectUri, state, codeChallenge) => {
@@ -149,6 +156,9 @@ function createSlackAuth({
 
   async function refresh(binding, credential) {
     if (!credential.refreshToken) return login.markReconnect(binding);
+    if (!getClientId() || !ownRelayRedirectUri(getRedirectUri())) {
+      return { ok: false, errorCode: "not_configured" };
+    }
     let result = await callRefresh(credential.refreshToken);
     // No clear answer: Slack may have rotated the token anyway. The used
     // refresh token still works for a short grace period, so ask once more.
@@ -208,6 +218,7 @@ function createSlackAuth({
 
   return {
     authorize,
+    isConfigured: () => Boolean(getClientId() && ownRelayRedirectUri(getRedirectUri())),
     getAccessToken: login.getAccessToken,
     markReconnect: login.markReconnect,
     revoke,

@@ -37,6 +37,7 @@ function createFinalizingManager(AudioManager) {
     _activeTranscriptionAbortController: null,
     _streamingSessionGeneration: 7,
     _activeStreamingSessionId: 7,
+    _streamingUsesOpenWhisprCloud: false,
     _streamingMicSwapPromise: null,
     streamingFinalText: "",
     streamingPartialText: "",
@@ -1358,6 +1359,8 @@ async function stopManagedDictation(
   };
   const { manager } = createFinalizingManager(AudioManager);
   manager.recordingStartTime = Date.now() - 8000;
+  manager._streamingUsesOpenWhisprCloud =
+    globalThis.__streamingFinalizationSettings.cloudTranscriptionMode !== "byok";
   manager.mergeRecordedSegments = async () => new Blob([new Uint8Array(100)]);
   manager.getStreamingProvider = () => orukeetProvider(final);
   manager.getStreamingProviderName = () => providerName;
@@ -1394,6 +1397,88 @@ async function stopManagedDictation(
   if (published.some((result) => result.text)) await settled;
   return { manager, uploads, reasonCalls, usage, published, errors, stopResult };
 }
+
+test("BYOK streaming never reports its transcript to official usage, even with legacy consent", async (t) => {
+  const AudioManager = await loadManagerClass(t);
+  const { usage, published, errors } = await stopManagedDictation(AudioManager, {
+    final: { success: true, text: "Own provider dictation" },
+    settings: { cloudTranscriptionMode: "byok", insightsSyncEnabled: true },
+  });
+  assert.equal(usage.length, 0);
+  assert.equal(published[0].text, "Own provider dictation");
+  assert.deepEqual(errors, []);
+});
+
+test("streaming metering follows the provider session rather than settings changed during recording", async (t) => {
+  const AudioManager = await loadManagerClass(t);
+  const final = { success: true, text: "Completed dictation" };
+  const byok = await stopManagedDictation(AudioManager, {
+    final,
+    overrides: { _streamingUsesOpenWhisprCloud: false },
+  });
+  assert.equal(byok.usage.length, 0);
+  assert.equal(byok.published[0].text, final.text);
+
+  const managed = await stopManagedDictation(AudioManager, {
+    final,
+    settings: { cloudTranscriptionMode: "byok", insightsSyncEnabled: true },
+    overrides: { _streamingUsesOpenWhisprCloud: true },
+  });
+  assert.equal(managed.usage.length, 1);
+  assert.equal(managed.usage[0].sendLogs, false);
+  for (const key of [
+    "localDate",
+    "analyticsOccurredAt",
+    "analyticsWordCount",
+    "analyticsCounterVersion",
+    "sttProcessingMs",
+    "audioSizeBytes",
+    "audioFormat",
+    "clientTotalMs",
+  ]) {
+    assert.equal(Object.hasOwn(managed.usage[0], key), false, key);
+  }
+  assert.equal(managed.published[0].text, final.text);
+});
+
+test("actual streaming startup excludes personal providers even with stale official-cloud settings", async (t) => {
+  const AudioManager = await loadManagerClass(t);
+  installCapture(t);
+  const usage = [];
+  globalThis.window.electronAPI.cloudStreamingUsage = async (...args) => {
+    usage.push(args);
+    return { success: true };
+  };
+  globalThis.window.dispatchEvent = () => {};
+  for (const [providerName, mode, expectedMetering] of [
+    ["tinfoil-realtime", "openwhispr", false],
+    ["corti", "openwhispr", false],
+    ["openai-realtime", "byok", false],
+    ["openai-realtime", "openwhispr", true],
+  ]) {
+    Object.assign(globalThis.__streamingFinalizationSettings, {
+      cloudTranscriptionMode: mode,
+      isSignedIn: true,
+      insightsSyncEnabled: true,
+    });
+    const provider = startingOrukeetProvider({
+      finalize: async () => ({ success: true, text: "Private dictation" }),
+    });
+    const { manager, completions, errors } = createStartingManager(AudioManager, {
+      providerName,
+      provider,
+    });
+    assert.equal(await manager.startStreamingRecording(), true);
+    assert.equal(manager._streamingUsesOpenWhisprCloud, expectedMetering, providerName);
+    manager.recordingStartTime = Date.now() - 8000;
+    const before = usage.length;
+    await manager.stopStreamingRecording();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(usage.length - before, Number(expectedMetering), providerName);
+    assert.equal(completions[0].text, "Private dictation");
+    assert.deepEqual(errors, []);
+  }
+});
 
 test("a confident unsupported estimate re-transcribes the kept recording through Cloud", async (t) => {
   const AudioManager = await loadManagerClass(t);

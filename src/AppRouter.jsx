@@ -15,6 +15,7 @@ import { usePolicyStore } from "./stores/policyStore";
 import { resolveSettledControlPanelWindowMode } from "./utils/controlPanelWindowMode.ts";
 import { resolveMacAccessibilityReadiness } from "./utils/macAccessibilityReadiness.ts";
 import { isControlPanelWindow } from "./utils/windowContext.ts";
+import forkConfig from "./config/fork.json";
 
 // Either marker means the flow is mid-way: the legacy step key is kept for
 // back-compat, the v2 session is what the rebuilt flow actually persists.
@@ -76,7 +77,8 @@ function MainApp() {
     // the previous account's rows while validation is still running. A failed
     // (guest/offline) resolution also counts as settled: canSync() then no-ops
     // because no validated auth context exists.
-    if (autoSyncReady) {
+    // Original hosted sync starts whenever autoSyncReady.
+    if (forkConfig.hostedServicesEnabled && autoSyncReady) {
       import("./services/SyncService.js")
         .then(({ syncService }) => syncService.startAutoSync())
         .catch(() => {});
@@ -95,6 +97,7 @@ function MainApp() {
 
     const onboardingCompleted = localStorage.getItem("onboardingCompleted") === "true";
     const authSkipped =
+      !forkConfig.officialAccountEnabled ||
       localStorage.getItem("authenticationSkipped") === "true" ||
       localStorage.getItem("skipAuth") === "true";
     const onboardingInProgress = isOnboardingInProgress();
@@ -132,6 +135,7 @@ function MainApp() {
     // compact window without first flashing restored control-panel dimensions.
     const completed = localStorage.getItem("onboardingCompleted") === "true";
     const authSkipped =
+      !forkConfig.officialAccountEnabled ||
       localStorage.getItem("authenticationSkipped") === "true" ||
       localStorage.getItem("skipAuth") === "true";
     if (completed && !isOnboardingInProgress() && (isSignedIn || authSkipped)) {
@@ -162,6 +166,7 @@ function MainApp() {
     const normalAppVisible =
       onboardingCompleted && (!isControlPanel || (!showOnboarding && !needsReauth));
     const authSkipped =
+      !forkConfig.officialAccountEnabled ||
       localStorage.getItem("authenticationSkipped") === "true" ||
       localStorage.getItem("skipAuth") === "true";
     // Main starts fail-closed. Only a renderer that has resolved the route and
@@ -211,7 +216,8 @@ function MainApp() {
     );
   }
 
-  if (isControlPanel && needsReauth) {
+  // Original reauthentication screen stays available for official-account builds.
+  if (forkConfig.officialAccountEnabled && isControlPanel && needsReauth) {
     return (
       <ReauthenticationScreen
         onContinueWithoutAccount={() => {

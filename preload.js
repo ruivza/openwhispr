@@ -580,6 +580,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   downloadUpdate: () => ipcRenderer.invoke("download-update"),
   installUpdate: () => ipcRenderer.invoke("install-update"),
   getAppVersion: () => ipcRenderer.invoke("get-app-version"),
+  getLocalMcpConfig: () => ipcRenderer.invoke("get-local-mcp-config"),
   getPostMigrationState: () => ipcRenderer.invoke("get-post-migration-state"),
   getOAuthProtocolRegistered: () => ipcRenderer.invoke("get-oauth-protocol-registered"),
   getOAuthProtocol: () => ipcRenderer.invoke("get-oauth-protocol"),

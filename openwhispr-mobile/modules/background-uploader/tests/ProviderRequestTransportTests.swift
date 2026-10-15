@@ -180,10 +180,10 @@ struct ProviderRequestTransportTests {
     precondition(ProviderRequestTransport.fileURL(from: atLimit.path) == atLimit)
     precondition(ProviderRequestTransport.fileURL(from: "https://example.com/audio.m4a") == nil)
 
-    for value in ["https://example.com", "http://127.0.0.1", "http://192.168.1.2", "http://100.64.1.1", "http://host.local", "http://host.ts.net", "http://[::1]"] {
+    for value in ["https://example.com", "https://api.openai.com", "https://openwhispr.com.example.test", "http://127.0.0.1", "http://192.168.1.2", "http://100.64.1.1", "http://host.local", "http://host.ts.net", "http://[::1]"] {
       precondition(ProviderRequestTransport.isAllowedURL(URL(string: value)!), "Expected allowed URL")
     }
-    for value in ["http://example.com", "http://127.example.com", "https://user:secret@example.com", "file:///tmp/audio", "https://example.com/#token"] {
+    for value in ["https://openwhispr.com", "https://api.openwhispr.com", "https://API.OpenWhispr.COM./v1", "http://api.openwhispr.com", "http://example.com", "http://127.example.com", "https://user:secret@example.com", "file:///tmp/audio", "https://example.com/#token"] {
       precondition(!ProviderRequestTransport.isAllowedURL(URL(string: value)!), "Expected rejected URL")
     }
     let snapshot = """

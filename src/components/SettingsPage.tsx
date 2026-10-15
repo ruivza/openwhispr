@@ -152,6 +152,7 @@ import { usePolicyModeOptions, usePolicySnapshot } from "../hooks/usePolicy";
 import { usePolicyStore } from "../stores/policyStore";
 import { stopRecording } from "../stores/meetingRecordingStore";
 import { requestSignIn } from "../utils/requestSignIn";
+import forkConfig from "../config/fork.json";
 import { canManageSystemAudioInApp } from "../utils/systemAudioAccess";
 import WorkspaceSection from "./settings/WorkspaceSection";
 import { enterpriseTileCta, type EnterpriseTileCta } from "../lib/workspaceBilling";
@@ -543,44 +544,46 @@ function TranscriptionSection({
     effectiveMode: effectiveTranscriptionMode,
     isModeAllowed,
   } = usePolicyModeOptions<InferenceModeOption>(
-    [
-      {
-        id: "openwhispr",
-        label: t("settingsPage.transcription.modes.openwhispr"),
-        description: t("settingsPage.transcription.modes.openwhisprDesc"),
-        icon: <Cloud className="w-4 h-4" />,
-        disabled: !isSignedIn,
-        signInRequired: !isSignedIn,
-      },
-      {
-        id: "providers",
-        label: t("settingsPage.transcription.modes.providers"),
-        description: t("settingsPage.transcription.modes.providersDesc"),
-        icon: <Key className="w-4 h-4" />,
-      },
-      {
-        id: "local",
-        label: t("settingsPage.transcription.modes.local"),
-        description: t("settingsPage.transcription.modes.localDesc"),
-        icon: <Cpu className="w-4 h-4" />,
-      },
-      {
-        id: "self-hosted",
-        label: t("settingsPage.transcription.modes.selfHosted"),
-        description: t("settingsPage.transcription.modes.selfHostedDesc"),
-        icon: <Network className="w-4 h-4" />,
-      },
-      ...(isEnterpriseTranscriptionOfferable(policySnapshot)
-        ? [
-            {
-              id: "enterprise" as const,
-              label: t("settingsPage.transcription.modes.enterprise"),
-              description: t("settingsPage.transcription.modes.enterpriseDesc"),
-              icon: <ShieldCheck className="w-4 h-4" />,
-            },
-          ]
-        : []),
-    ],
+    (
+      [
+        {
+          id: "openwhispr",
+          label: t("settingsPage.transcription.modes.openwhispr"),
+          description: t("settingsPage.transcription.modes.openwhisprDesc"),
+          icon: <Cloud className="w-4 h-4" />,
+          disabled: !isSignedIn,
+          signInRequired: !isSignedIn,
+        },
+        {
+          id: "providers",
+          label: t("settingsPage.transcription.modes.providers"),
+          description: t("settingsPage.transcription.modes.providersDesc"),
+          icon: <Key className="w-4 h-4" />,
+        },
+        {
+          id: "local",
+          label: t("settingsPage.transcription.modes.local"),
+          description: t("settingsPage.transcription.modes.localDesc"),
+          icon: <Cpu className="w-4 h-4" />,
+        },
+        {
+          id: "self-hosted",
+          label: t("settingsPage.transcription.modes.selfHosted"),
+          description: t("settingsPage.transcription.modes.selfHostedDesc"),
+          icon: <Network className="w-4 h-4" />,
+        },
+        ...(isEnterpriseTranscriptionOfferable(policySnapshot)
+          ? [
+              {
+                id: "enterprise" as const,
+                label: t("settingsPage.transcription.modes.enterprise"),
+                description: t("settingsPage.transcription.modes.enterpriseDesc"),
+                icon: <ShieldCheck className="w-4 h-4" />,
+              },
+            ]
+          : []),
+      ] as InferenceModeOption[]
+    ).filter((mode) => forkConfig.hostedServicesEnabled || mode.id !== "openwhispr"),
     "transcription",
     transcriptionMode,
     {
@@ -589,6 +592,7 @@ function TranscriptionSection({
     }
   );
   const handleTranscriptionModeSelect = (mode: InferenceMode) => {
+    if (mode === "openwhispr" && !forkConfig.hostedServicesEnabled) return;
     if (!isModeAllowed(mode)) return;
     if (mode === "openwhispr" && !isSignedIn) {
       requestSignIn();
@@ -1800,7 +1804,17 @@ export default function SettingsPage({
     leavePending: leaderboardLeavePending,
     ready: leaderboardParticipationReady,
     updating: leaderboardParticipationUpdating,
-  } = useLeaderboardParticipation();
+  } = {
+    // Keep account participation untouched, including queued leaves from old builds.
+    enabled: false,
+    error: null,
+    join: async () => false,
+    leave: async () => true,
+    leavePending: false,
+    ready: false,
+    updating: false,
+  };
+  // } = useLeaderboardParticipation();
   const [leaderboardPreferencePending, setLeaderboardPreferencePending] = useState(false);
   const updateLeaderboardParticipation = useCallback(
     async (enabled: boolean) => {
@@ -2179,6 +2193,11 @@ export default function SettingsPage({
   );
 
   const renderSectionContent = () => {
+    // Preserve the original account/billing/workspace screens below, but do not
+    // mount them through stale deep links when official services are disabled.
+    if (!forkConfig.officialAccountEnabled && ["account", "plansBilling"].includes(activeSection))
+      return null;
+    if (!forkConfig.hostedServicesEnabled && activeSection === "workspace") return null;
     switch (activeSection) {
       case "account":
         return (
@@ -4276,83 +4295,87 @@ EOF`,
                 </div>
               )}
 
-              <SettingsPanel>
-                <SettingsPanelRow>
-                  <SettingsRow
-                    label={t("settingsPage.privacy.insightsSync")}
-                    description={
-                      !isSignedIn
-                        ? t("settingsPage.privacy.insightsSyncRequiresAccount")
-                        : !insightsSyncAllowedByPolicy
-                          ? t("common.managedByOrg")
-                          : effectiveDataRetentionEnabled
-                            ? t("settingsPage.privacy.insightsSyncDescription")
-                            : t("settingsPage.privacy.insightsSyncRequiresHistory")
-                    }
-                  >
-                    {/* With history off nothing is counted anywhere: this
-                        device records no counter, and the cloud writes none
-                        either, because analyticsSyncEnabled withholds the
-                        localDate its analytics write requires. Turning this on
-                        could therefore only promise a sync that never happens —
-                        but an already-on toggle must stay switchable off. */}
-                    <Toggle
-                      checked={insightsSyncEnabled}
-                      disabled={
-                        !isSignedIn ||
-                        !canToggleInsightsSync ||
-                        (!effectiveDataRetentionEnabled && !insightsSyncEnabled)
-                      }
-                      onChange={(enabled) => {
-                        if (enabled) void enableInsightsSync();
-                        else disableInsightsSync();
-                      }}
-                    />
-                  </SettingsRow>
-                </SettingsPanelRow>
-                <SettingsPanelRow>
-                  <SettingsRow
-                    label={t("insights.leaderboard.title")}
-                    description={
-                      !isSignedIn
-                        ? t("settingsPage.privacy.leaderboardRequiresAccount")
-                        : leaderboardParticipationError === "read"
-                          ? t("insights.leaderboard.activationError")
-                          : leaderboardLeavePending
-                            ? t("insights.leaderboard.leavePending")
-                            : !insightsSyncAllowedByPolicy
-                              ? t("common.managedByOrg")
-                              : !effectiveDataRetentionEnabled
-                                ? t("settingsPage.privacy.leaderboardRequiresHistory")
-                                : t("settingsPage.privacy.leaderboardDescription")
-                    }
-                  >
-                    <Toggle
-                      checked={isSignedIn && leaderboardParticipationEnabled}
-                      disabled={
-                        !isSignedIn ||
-                        !leaderboardParticipationReady ||
-                        leaderboardPreferencePending ||
-                        leaderboardParticipationUpdating ||
-                        leaderboardParticipationError === "read" ||
-                        (!leaderboardParticipationEnabled &&
-                          (!effectiveDataRetentionEnabled ||
-                            !insightsSyncAllowedByPolicy ||
-                            (!insightsSyncEnabled && !canToggleInsightsSync)))
-                      }
-                      onChange={(enabled) => void updateLeaderboardParticipation(enabled)}
-                    />
-                  </SettingsRow>
-                </SettingsPanelRow>
-                <SettingsPanelRow>
-                  <SettingsRow
-                    label={t("settingsPage.privacy.usageAnalytics")}
-                    description={t("settingsPage.privacy.usageAnalyticsDescription")}
-                  >
-                    <Toggle checked={telemetryEnabled} onChange={setTelemetryEnabled} />
-                  </SettingsRow>
-                </SettingsPanelRow>
-              </SettingsPanel>
+              {/* Cloud analytics and leaderboard controls are disabled. */}
+              {
+                null
+                //               <SettingsPanel>
+                //                 <SettingsPanelRow>
+                //                   <SettingsRow
+                //                     label={t("settingsPage.privacy.insightsSync")}
+                //                     description={
+                //                       !isSignedIn
+                //                         ? t("settingsPage.privacy.insightsSyncRequiresAccount")
+                //                         : !insightsSyncAllowedByPolicy
+                //                           ? t("common.managedByOrg")
+                //                           : effectiveDataRetentionEnabled
+                //                             ? t("settingsPage.privacy.insightsSyncDescription")
+                //                             : t("settingsPage.privacy.insightsSyncRequiresHistory")
+                //                     }
+                //                   >
+                //                     {/* With history off nothing is counted anywhere: this
+                //                         device records no counter, and the cloud writes none
+                //                         either, because analyticsSyncEnabled withholds the
+                //                         localDate its analytics write requires. Turning this on
+                //                         could therefore only promise a sync that never happens —
+                //                         but an already-on toggle must stay switchable off. */}
+                //                     <Toggle
+                //                       checked={insightsSyncEnabled}
+                //                       disabled={
+                //                         !isSignedIn ||
+                //                         !canToggleInsightsSync ||
+                //                         (!effectiveDataRetentionEnabled && !insightsSyncEnabled)
+                //                       }
+                //                       onChange={(enabled) => {
+                //                         if (enabled) void enableInsightsSync();
+                //                         else disableInsightsSync();
+                //                       }}
+                //                     />
+                //                   </SettingsRow>
+                //                 </SettingsPanelRow>
+                //                 <SettingsPanelRow>
+                //                   <SettingsRow
+                //                     label={t("insights.leaderboard.title")}
+                //                     description={
+                //                       !isSignedIn
+                //                         ? t("settingsPage.privacy.leaderboardRequiresAccount")
+                //                         : leaderboardParticipationError === "read"
+                //                           ? t("insights.leaderboard.activationError")
+                //                           : leaderboardLeavePending
+                //                             ? t("insights.leaderboard.leavePending")
+                //                             : !insightsSyncAllowedByPolicy
+                //                               ? t("common.managedByOrg")
+                //                               : !effectiveDataRetentionEnabled
+                //                                 ? t("settingsPage.privacy.leaderboardRequiresHistory")
+                //                                 : t("settingsPage.privacy.leaderboardDescription")
+                //                     }
+                //                   >
+                //                     <Toggle
+                //                       checked={isSignedIn && leaderboardParticipationEnabled}
+                //                       disabled={
+                //                         !isSignedIn ||
+                //                         !leaderboardParticipationReady ||
+                //                         leaderboardPreferencePending ||
+                //                         leaderboardParticipationUpdating ||
+                //                         leaderboardParticipationError === "read" ||
+                //                         (!leaderboardParticipationEnabled &&
+                //                           (!effectiveDataRetentionEnabled ||
+                //                             !insightsSyncAllowedByPolicy ||
+                //                             (!insightsSyncEnabled && !canToggleInsightsSync)))
+                //                       }
+                //                       onChange={(enabled) => void updateLeaderboardParticipation(enabled)}
+                //                     />
+                //                   </SettingsRow>
+                //                 </SettingsPanelRow>
+                //                 <SettingsPanelRow>
+                //                   <SettingsRow
+                //                     label={t("settingsPage.privacy.usageAnalytics")}
+                //                     description={t("settingsPage.privacy.usageAnalyticsDescription")}
+                //                   >
+                //                     <Toggle checked={telemetryEnabled} onChange={setTelemetryEnabled} />
+                //                   </SettingsRow>
+                //                 </SettingsPanelRow>
+                //               </SettingsPanel>
+              }
             </div>
 
             {/* Audio Retention */}

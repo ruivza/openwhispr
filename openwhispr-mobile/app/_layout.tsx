@@ -20,34 +20,35 @@ import { useOnboardingStore } from '@/store/useOnboardingStore';
 import { useUsageStore } from '@/store/useUsageStore';
 import { resolveResumeAction } from '@/lib/appResume';
 import { consumeRecoveryDeepLink } from '@/store/useKeyboardRecoveryStore';
-import AuthScreen from '@/screens/AuthScreen';
+// import AuthScreen from '@/screens/AuthScreen';
 import { OnboardingFlow } from '@/screens/onboarding/OnboardingFlow';
 import { AnimatedSplash } from '@/components/features/AnimatedSplash';
 import { useKeyboardHandoff } from '@/hooks/useKeyboardHandoff';
-import { useRevenueCatIdentity } from '@/hooks/useRevenueCatIdentity';
-import { useAnonymousOnboardingSession } from '@/hooks/useAnonymousOnboardingSession';
+// import { useRevenueCatIdentity } from '@/hooks/useRevenueCatIdentity';
+// import { useAnonymousOnboardingSession } from '@/hooks/useAnonymousOnboardingSession';
 import { useGuestPrivateMode } from '@/hooks/useGuestPrivateMode';
 import { runMigrations } from '@/db/migrate';
-import { initSentry, Sentry } from '@/lib/sentry';
-import { initAppsFlyer, refreshAppsFlyerTrackingAuthorization } from '@/lib/appsflyer';
-import { initSyncTriggers } from '@/sync/syncEngine';
+// Telemetry disabled; retain the original startup imports for reference.
+// import { initSentry, Sentry } from '@/lib/sentry';
+// import { initAppsFlyer, refreshAppsFlyerTrackingAuthorization } from '@/lib/appsflyer';
+// import { initSyncTriggers } from '@/sync/syncEngine';
 import { PermissionAlertMount } from '@/components/ui/PermissionAlert';
 import { startKeyboardToneSync } from '@/lib/keyboardToneSync';
 import { startKeyboardAgentSync } from '@/lib/keyboardAgentSync';
 import { startKeyboardFullAccessProbe } from '@/lib/keyboardFullAccessProbe';
-import { OpenWhisprSuperwallProvider } from '@/components/superwall/OpenWhisprSuperwallProvider';
+// import { OpenWhisprSuperwallProvider } from '@/components/superwall/OpenWhisprSuperwallProvider';
 import { eraseProviderCredentialsFromPreviousInstall } from '@/services/providers/ProviderCredentials';
 
-initSentry();
-initAppsFlyer();
+// initSentry();
+// initAppsFlyer();
 runMigrations();
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
 function RootLayout() {
   useKeyboardHandoff();
-  useRevenueCatIdentity();
-  useAnonymousOnboardingSession();
+  // useRevenueCatIdentity();
+  // useAnonymousOnboardingSession();
   useGuestPrivateMode();
 
   const [fontsLoaded] = useFonts({
@@ -116,9 +117,9 @@ function RootLayout() {
     };
   }, []);
 
-  useEffect(() => {
-    initSyncTriggers();
-  }, []);
+  // useEffect(() => {
+  //   initSyncTriggers();
+  // }, []);
 
   // After an interactive sign-in (AuthScreen was shown, then auth completed),
   // land on home instead of restoring the route that was active before — e.g. the
@@ -159,13 +160,14 @@ function RootLayout() {
         backgrounded = true;
         return;
       }
-      if (state === 'active') {
-        // ATT can change in iOS Settings while the app is backgrounded. Reapply
-        // that system decision before allowing any further attribution events.
-        refreshAppsFlyerTrackingAuthorization().catch((error: unknown): void => {
-          Sentry.captureException(error);
-        });
-      }
+      // Attribution and ATT checks are disabled, including on app resume.
+      // if (state === 'active') {
+      //   // ATT can change in iOS Settings while the app is backgrounded. Reapply
+      //   // that system decision before allowing any further attribution events.
+      //   refreshAppsFlyerTrackingAuthorization().catch((error: unknown): void => {
+      //     Sentry.captureException(error);
+      //   });
+      // }
       if (state === 'active' && backgrounded) {
         backgrounded = false;
         const { resetToHome, refreshUsage } = resolveResumeAction(alreadyOnHomeRef.current);
@@ -186,7 +188,7 @@ function RootLayout() {
     // account step, so asking for an account up front would defeat the point.
     // Once onboarding is done, an explicit sign-out still lands on AuthScreen.
     if (!onboardingFinished) return <OnboardingFlow />;
-    if (!user && !isGuest) return <AuthScreen />;
+    // if (!user && !isGuest) return <AuthScreen />;
     return (
       <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
         <Stack screenOptions={{ headerShown: false }}>
@@ -224,13 +226,14 @@ function RootLayout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <OpenWhisprSuperwallProvider>
+      {/* <OpenWhisprSuperwallProvider> */}
         <SafeAreaProvider>{renderInner()}</SafeAreaProvider>
         <PermissionAlertMount />
         {showSplash && <AnimatedSplash appReady={appReady} onFinish={() => setShowSplash(false)} />}
-      </OpenWhisprSuperwallProvider>
+      {/* </OpenWhisprSuperwallProvider> */}
     </GestureHandlerRootView>
   );
 }
 
-export default Sentry.wrap(RootLayout);
+// export default Sentry.wrap(RootLayout);
+export default RootLayout;

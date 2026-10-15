@@ -823,22 +823,28 @@ test("find_contact keeps its turn out of the user's document, whatever it finds"
   assert.equal(await holdsFor("Gabe Torres"), 1);
 });
 
-test("connector plan eligibility uses usage data, then the persisted isSubscribed flag", async () => {
-  const { hasConnectorPlan } = await loadEligibility();
-  const success = (isSubscribed, isTrial) => ({
-    status: "success",
-    accountId: "acct",
-    data: { isSubscribed, isTrial },
-    isRefreshing: false,
-  });
-  assert.equal(hasConnectorPlan(success(false, true), false), true);
-  assert.equal(hasConnectorPlan(success(false, false), true), false);
-  // A fresh voice-window session never loads usage, so the isSubscribed flag
-  // the control panel persisted (the API sets it for trials too) decides.
-  assert.equal(hasConnectorPlan({ status: "idle", accountId: null }, true), true);
-  assert.equal(hasConnectorPlan({ status: "idle", accountId: null }, false), false);
-  assert.equal(hasConnectorPlan({ status: "loading", accountId: "acct" }, false), false);
+test("local connectors are available without official subscription or usage state", async () => {
+  const { canUseLocalConnectors } = await loadEligibility();
+  assert.equal(canUseLocalConnectors(), true);
 });
+
+// Original official-account behavior retained for reference.
+// test("connector plan eligibility uses usage data, then the persisted isSubscribed flag", async () => {
+//   const { hasConnectorPlan } = await loadEligibility();
+//   const success = (isSubscribed, isTrial) => ({
+//     status: "success",
+//     accountId: "acct",
+//     data: { isSubscribed, isTrial },
+//     isRefreshing: false,
+//   });
+//   assert.equal(hasConnectorPlan(success(false, true), false), true);
+//   assert.equal(hasConnectorPlan(success(false, false), true), false);
+//   // A fresh voice-window session never loads usage, so the isSubscribed flag
+//   // the control panel persisted (the API sets it for trials too) decides.
+//   assert.equal(hasConnectorPlan({ status: "idle", accountId: null }, true), true);
+//   assert.equal(hasConnectorPlan({ status: "idle", accountId: null }, false), false);
+//   assert.equal(hasConnectorPlan({ status: "loading", accountId: "acct" }, false), false);
+// });
 
 test("connector tools register only when connectors are available", async () => {
   const { createToolRegistry } = await loadRegistry();

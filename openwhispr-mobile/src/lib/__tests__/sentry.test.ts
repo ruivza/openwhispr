@@ -1,3 +1,64 @@
+const mockSdkLoaded = jest.fn();
+const mockSdkInit = jest.fn();
+const mockSdkCapture = jest.fn();
+const mockReplayIntegration = jest.fn();
+const mockWrap = jest.fn();
+const mockSubscribe = jest.fn();
+const mockGetConfig = jest.fn(() => ({
+  config: { defaultMode: 'cloud', usageAnalyticsEnabled: true },
+}));
+
+jest.mock('@sentry/react-native', () => {
+  mockSdkLoaded();
+  return {
+    init: mockSdkInit,
+    captureException: mockSdkCapture,
+    captureMessage: mockSdkCapture,
+    addBreadcrumb: mockSdkCapture,
+    mobileReplayIntegration: mockReplayIntegration,
+    wrap: mockWrap,
+  };
+});
+jest.mock('@/store/useConfigStore', () => ({
+  useConfigStore: { getState: mockGetConfig, subscribe: mockSubscribe },
+}));
+
+const originalDsn = process.env.EXPO_PUBLIC_SENTRY_DSN;
+beforeEach(() => {
+  jest.resetModules();
+  jest.clearAllMocks();
+  process.env.EXPO_PUBLIC_SENTRY_DSN = 'https://public@sentry.example/1';
+});
+afterAll(() => {
+  if (originalDsn === undefined) delete process.env.EXPO_PUBLIC_SENTRY_DSN;
+  else process.env.EXPO_PUBLIC_SENTRY_DSN = originalDsn;
+});
+
+it('never loads or initializes Sentry with a DSN and a saved analytics opt-in', () => {
+  const { initSentry } = require('../sentry') as typeof import('../sentry');
+  initSentry();
+  initSentry();
+  expect(mockSdkLoaded).not.toHaveBeenCalled();
+  expect(mockSdkInit).not.toHaveBeenCalled();
+  expect(mockGetConfig).not.toHaveBeenCalled();
+  expect(mockSubscribe).not.toHaveBeenCalled();
+});
+
+it('discards diagnostics and keeps the root component unwrapped', () => {
+  const { Sentry } = require('../sentry') as typeof import('../sentry');
+  const component = () => null;
+  expect(Sentry.captureException(new Error('synthetic error'))).toBe('');
+  expect(Sentry.captureMessage('synthetic message', 'warning')).toBe('');
+  Sentry.addBreadcrumb({ category: 'synthetic', message: 'synthetic breadcrumb' });
+  expect(Sentry.wrap(component)).toBe(component);
+  expect(mockSdkLoaded).not.toHaveBeenCalled();
+  expect(mockSdkCapture).not.toHaveBeenCalled();
+  expect(mockReplayIntegration).not.toHaveBeenCalled();
+  expect(mockWrap).not.toHaveBeenCalled();
+});
+
+// Original telemetry expectations retained while this build disables collection.
+/*
 import type { ReactNativeOptions } from '@sentry/react-native';
 import type { UserConfig } from '@/types';
 
@@ -243,3 +304,4 @@ it.each([true, false])('uses the latest consent (%s) after a pending shutdown', 
   expect(mockInit).toHaveBeenCalledTimes(enabled ? 2 : 1);
   expect(mockClose).toHaveBeenCalledTimes(1);
 });
+*/

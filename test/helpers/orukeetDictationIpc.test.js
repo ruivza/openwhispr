@@ -102,6 +102,13 @@ const electronStub = {
 Module._load = function loadWithMocks(request, parent, isMain) {
   if (request === "electron") return electronStub;
   if (parent?.filename === handlersModulePath) {
+    // Exercise the preserved cloud implementation explicitly; shipping fork
+    // defaults are covered by forkServiceConfig.test.js and disable these routes.
+    if (request === "./forkServiceConfig")
+      return {
+        resolveHostedApiUrl: (env) => env.OPENWHISPR_API_URL || "",
+        resolveHostedAuthUrl: () => "https://auth.openwhispr.test",
+      };
     if (request === "./orukeetStreaming")
       return {
         ...orukeetStreamingModule,
@@ -334,7 +341,8 @@ test("closing the owning window releases the managed socket and auth subscriptio
   assert.equal(event.sender.listenerCount("destroyed"), 0);
 });
 
-test("cloud cleanup forwards fallback telemetry to its combined log request", async () => {
+// Original behavior: cloud cleanup forwarded fallback telemetry to its combined log request.
+test("cloud cleanup omits diagnostic telemetry while retaining the inference request", async () => {
   const requests = [];
   backendResponse = async (url, options) => {
     assert.equal(url, "https://api.openwhispr.test/api/reason");
@@ -346,9 +354,27 @@ test("cloud cleanup forwards fallback telemetry to its combined log request", as
       purpose: "cleanup",
       sttProvider: "groq",
       streamingFallbackReason: reason,
+      sttProcessingMs: 123,
+      audioSizeBytes: 456,
+      audioFormat: "linear16",
+      clientTotalMs: 789,
     });
     assert.equal(result.success, true);
-    assert.equal(requests.at(-1).streamingFallbackReason, reason);
+    // assert.equal(requests.at(-1).streamingFallbackReason, reason);
+    for (const key of [
+      "streamingFallbackReason",
+      "sessionId",
+      "appVersion",
+      "clientVersion",
+      "sttProcessingMs",
+      "audioSizeBytes",
+      "audioFormat",
+      "clientTotalMs",
+    ]) {
+      assert.equal(Object.hasOwn(requests.at(-1), key), false, key);
+    }
+    assert.equal(requests.at(-1).text, "raw transcript");
+    assert.equal(requests.at(-1).purpose, "cleanup");
     assert.equal(requests.at(-1).sttProvider, "groq");
   }
   assert.equal(requests.length, 2);
@@ -362,7 +388,7 @@ const DETECTED = {
   sttDetectedLanguageStatus: "detected",
 };
 
-test("cloud cleanup forwards the detected language to its combined log request", async () => {
+test("cloud cleanup retains the detected language used by cloud routing", async () => {
   const requests = [];
   backendResponse = async (url, options) => {
     requests.push(JSON.parse(options.body));
@@ -398,6 +424,16 @@ test("streaming usage forwards the detected language", async () => {
   };
   await handlers.get("cloud-streaming-usage")(event, "hello", 4, {
     sttProvider: "orukeet",
+    clientTranscriptionId: "metering-id",
+    sendLogs: true,
+    localDate: "2026-10-15",
+    analyticsOccurredAt: "2026-10-15T00:00:00.000Z",
+    analyticsWordCount: 99,
+    analyticsCounterVersion: 2,
+    sttProcessingMs: 123,
+    audioSizeBytes: 456,
+    audioFormat: "linear16",
+    clientTotalMs: 789,
     ...DETECTED,
   });
   await handlers.get("cloud-streaming-usage")(event, "hello", 4, {
@@ -410,9 +446,28 @@ test("streaming usage forwards the detected language", async () => {
   );
   assert.equal(requests[1].sttDetectedLanguageStatus, "unknown");
   assert.equal(Object.hasOwn(requests[1], "sttDetectedLanguage"), false);
+  assert.equal(requests[0].text, "hello");
+  assert.equal(requests[0].audioDurationSeconds, 4);
+  assert.equal(requests[0].clientTranscriptionId, "metering-id");
+  assert.equal(requests[0].sendLogs, false);
+  for (const key of [
+    "sessionId",
+    "appVersion",
+    "clientVersion",
+    "sttProcessingMs",
+    "audioSizeBytes",
+    "audioFormat",
+    "clientTotalMs",
+    "localDate",
+    "analyticsOccurredAt",
+    "analyticsWordCount",
+    "analyticsCounterVersion",
+  ]) {
+    assert.equal(Object.hasOwn(requests[0], key), false, key);
+  }
 });
 
-test("the language fallback upload carries the fallback reason and detection, and no language", async () => {
+test("the language fallback upload keeps routing data and disables logs and statistics", async () => {
   const bodies = [];
   backendResponse = async (url, options) => {
     assert.match(url, /\/api\/transcribe$/);
@@ -421,11 +476,25 @@ test("the language fallback upload carries the fallback reason and detection, an
   };
   const result = await handlers.get("cloud-transcribe")(event, new Uint8Array(64).buffer, {
     streamingFallbackReason: "language_detected_unsupported",
+    sendLogs: "true",
+    localDate: "2026-10-15",
+    analyticsOccurredAt: "2026-10-15T00:00:00.000Z",
     ...DETECTED,
   });
   assert.equal(result.success, true);
   const body = bodies[0];
-  assert.match(body, /name="streamingFallbackReason"\r\n\r\nlanguage_detected_unsupported\r\n/);
+  // assert.match(body, /name="streamingFallbackReason"\r\n\r\nlanguage_detected_unsupported\r\n/);
+  assert.match(body, /name="sendLogs"\r\n\r\nfalse\r\n/);
+  for (const field of [
+    "streamingFallbackReason",
+    "sessionId",
+    "appVersion",
+    "clientVersion",
+    "localDate",
+    "analyticsOccurredAt",
+  ]) {
+    assert.doesNotMatch(body, new RegExp(`name="${field}"`));
+  }
   assert.match(body, /name="sttDetectedLanguage"\r\n\r\nja\r\n/);
   assert.match(body, /name="sttDetectedLanguageConfidence"\r\n\r\n0\.97\r\n/);
   assert.match(body, /name="sttDetectedLanguageAudioSeconds"\r\n\r\n6\r\n/);

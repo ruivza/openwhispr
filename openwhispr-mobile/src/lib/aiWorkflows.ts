@@ -18,7 +18,8 @@ export const WORKFLOWS = Object.keys(WORKFLOW_LABELS) as MobileInferenceScope[];
 export const UNSET_PROVIDER_NOTES: Partial<Record<MobileInferenceScope, string>> = {
   cleanup: 'Not saved yet. Cleanup is skipped until you save a selection.',
   agent:
-    'Not saved yet. The voice assistant is skipped until you save a selection; note chat uses OpenWhispr Cloud.',
+    // 'Not saved yet. The voice assistant is skipped until you save a selection; note chat uses OpenWhispr Cloud.',
+    'Choose a provider for the voice assistant. Note chat uses your saved On-Device or BYOK selection.',
 };
 
 // Private mode skips cleanup until On-Device or a provider is saved for it, so the unset
@@ -36,7 +37,8 @@ export const ON_DEVICE_MODE_NOTES: Partial<Record<MobileInferenceScope, string>>
   notes:
     'Private mode formats notes on this iPhone and asks before sending one to your choice here.',
   cleanup:
-    'In Private mode, cleanup runs on this iPhone, or sends only the transcript text to your provider with Bring Your Own Key. OpenWhispr Cloud cleanup is skipped until Private mode is off.',
+    // 'In Private mode, cleanup runs on this iPhone, or sends only the transcript text to your provider with Bring Your Own Key. OpenWhispr Cloud cleanup is skipped until Private mode is off.',
+    'Cleanup runs on this iPhone, or sends transcript text to the provider you select with Bring Your Own Key.',
   agent:
     'In Private mode the voice assistant is off, and note chat asks before sending a note off this iPhone.',
 };
@@ -75,11 +77,12 @@ export function unsetSelection(
   scope: MobileInferenceScope,
   activeMode: ProcessingMode,
 ): InferenceSelection {
-  if (activeMode === 'private')
-    return scope === 'agent' ? { mode: 'openwhispr' } : { mode: 'local' };
+  // if (activeMode === 'private') return scope === 'agent' ? { mode: 'openwhispr' } : { mode: 'local' };
+  if (activeMode === 'private') return { mode: 'local' };
   if (activeMode === 'providers' && (scope === 'dictation' || UNSET_PROVIDER_NOTES[scope]))
     return { mode: 'providers' };
-  return { mode: 'openwhispr' };
+  // return { mode: 'openwhispr' };
+  return { mode: 'local' };
 }
 
 export function workflowSummary(
@@ -105,8 +108,8 @@ export function workflowSummary(
   // not set, goes straight to Cloud.
   if (activeMode === 'private') {
     if (scope === 'cleanup' && !cleansLocalTranscripts(config)) return 'Skipped';
-    const chatOnCloud = (config?.inference?.agent?.mode ?? 'openwhispr') === 'openwhispr';
-    if (scope === 'agent' && chatOnCloud) return MODE_LABELS.openwhispr;
+    // const chatOnCloud = (config?.inference?.agent?.mode ?? 'openwhispr') === 'openwhispr';
+    // if (scope === 'agent' && chatOnCloud) return MODE_LABELS.openwhispr;
   }
   const selection = config?.inference?.[scope] ?? unsetSelection(scope, activeMode);
   if (selection.mode === 'local' && isLocalModelKey(selection.modelId))

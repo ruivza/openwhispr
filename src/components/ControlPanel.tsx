@@ -16,6 +16,7 @@ import { useToast } from "./ui/useToast";
 import { useUpdater } from "../hooks/useUpdater";
 import { useSettings } from "../hooks/useSettings";
 import { useAuth } from "../hooks/useAuth";
+import forkConfig from "../config/fork.json";
 import { useJoinableWorkspaces } from "../hooks/useJoinableWorkspaces";
 import { useWorkspace } from "../hooks/useWorkspace";
 import { manageableWorkspaces, selectWorkspaceForSpaceCreation } from "../lib/workspaceSelection";
@@ -194,12 +195,15 @@ export default function ControlPanel({ initialSettingsSection }: ControlPanelPro
     null
   );
   const usage = useUsage();
-  const upsell = decideUpsell({
-    authLoaded,
-    isSignedIn,
-    hasPaidAccess: usage?.hasPaidAccess ?? null,
-    isPastDue: usage?.isPastDue ?? false,
-  });
+  // Original subscription decision is retained for builds with official accounts.
+  const upsell = !forkConfig.officialAccountEnabled
+    ? "hide"
+    : decideUpsell({
+        authLoaded,
+        isSignedIn,
+        hasPaidAccess: usage?.hasPaidAccess ?? null,
+        isPastDue: usage?.isPastDue ?? false,
+      });
 
   const {
     status: updateStatus,
@@ -214,7 +218,7 @@ export default function ControlPanel({ initialSettingsSection }: ControlPanelPro
     setSettingsSection("transcription");
     setShowSettings(true);
   }, []);
-  useSignInCloudNudge(isSignedIn, openTranscriptionSettings);
+  useSignInCloudNudge(forkConfig.officialAccountEnabled && isSignedIn, openTranscriptionSettings);
 
   const agentAllowedByPolicy = usePolicyStore(isAgentAllowed);
   const { createNote } = useCreateNote();
@@ -337,6 +341,7 @@ export default function ControlPanel({ initialSettingsSection }: ControlPanelPro
   }, [updateStatus.updateDownloaded, isDownloading, toast, t]);
 
   useEffect(() => {
+    if (!forkConfig.hostedServicesEnabled) return;
     const dispose = window.electronAPI?.onLimitReached?.(
       (data: { wordsUsed: number; limit: number }) => {
         if (!hasShownUpgradePrompt.current) {
@@ -359,6 +364,7 @@ export default function ControlPanel({ initialSettingsSection }: ControlPanelPro
   }, [toast, t]);
 
   useEffect(() => {
+    if (!forkConfig.officialAccountEnabled) return;
     if (!usage?.isPastDue) return;
     if (sessionStorage.getItem("pastDueNotified")) return;
     sessionStorage.setItem("pastDueNotified", "true");
@@ -371,6 +377,7 @@ export default function ControlPanel({ initialSettingsSection }: ControlPanelPro
   }, [usage?.isPastDue, toast, t]);
 
   useEffect(() => {
+    if (!forkConfig.hostedServicesEnabled) return;
     const unsubscribe = window.electronAPI?.onWorkspaceInvitationToken?.((token) => {
       setInvitationToken(token);
       // Consume the main-process stash so a handled push isn't re-pulled on a
@@ -386,7 +393,7 @@ export default function ControlPanel({ initialSettingsSection }: ControlPanelPro
   useEffect(() => {
     // Also when signed out (the modal's "Sign in to accept" handles auth);
     // isSignedIn stays in the deps so a stored token resurfaces after sign-in.
-    if (!authLoaded) return;
+    if (!forkConfig.hostedServicesEnabled || !authLoaded) return;
     const pending = consumePendingInvitationToken();
     if (pending) {
       setInvitationToken(pending);
@@ -949,12 +956,15 @@ export default function ControlPanel({ initialSettingsSection }: ControlPanelPro
         onOk={() => {}}
       />
 
-      <UpgradePrompt
-        open={showUpgradePrompt}
-        onOpenChange={setShowUpgradePrompt}
-        wordsUsed={limitData?.wordsUsed}
-        limit={limitData?.limit}
-      />
+      {/* Original upgrade dialog remains available only with official accounts. */}
+      {forkConfig.officialAccountEnabled && (
+        <UpgradePrompt
+          open={showUpgradePrompt}
+          onOpenChange={setShowUpgradePrompt}
+          wordsUsed={limitData?.wordsUsed}
+          limit={limitData?.limit}
+        />
+      )}
 
       <PostMigrationOnboarding
         open={showPostMigration}
@@ -977,13 +987,13 @@ export default function ControlPanel({ initialSettingsSection }: ControlPanelPro
         </Suspense>
       )}
 
-      {showReferrals && (
+      {forkConfig.officialAccountEnabled && showReferrals && (
         <Suspense fallback={null}>
           <ReferralModal open={showReferrals} onOpenChange={setShowReferrals} />
         </Suspense>
       )}
 
-      {showInviteTeam && inviteWorkspace && (
+      {forkConfig.hostedServicesEnabled && showInviteTeam && inviteWorkspace && (
         <Suspense fallback={null}>
           <InviteTeammateDialog
             open={showInviteTeam}
@@ -994,22 +1004,26 @@ export default function ControlPanel({ initialSettingsSection }: ControlPanelPro
         </Suspense>
       )}
 
-      <AcceptInvitationModal
-        token={invitationToken}
-        onClose={() => setInvitationToken(null)}
-        onAccepted={(entry) => {
-          setInvitationNotesEntry(entry);
-          setActiveView("personal-notes");
-        }}
-      />
+      {forkConfig.hostedServicesEnabled && (
+        <AcceptInvitationModal
+          token={invitationToken}
+          onClose={() => setInvitationToken(null)}
+          onAccepted={(entry) => {
+            setInvitationNotesEntry(entry);
+            setActiveView("personal-notes");
+          }}
+        />
+      )}
 
-      <JoinYourTeamModal
-        joinable={joinable}
-        domain={user?.email?.split("@")[1] ?? null}
-        onDismiss={dismissJoinable}
-        onRequested={markRequested}
-        onJoined={() => setActiveView("personal-notes")}
-      />
+      {forkConfig.hostedServicesEnabled && (
+        <JoinYourTeamModal
+          joinable={joinable}
+          domain={user?.email?.split("@")[1] ?? null}
+          onDismiss={dismissJoinable}
+          onRequested={markRequested}
+          onJoined={() => setActiveView("personal-notes")}
+        />
+      )}
 
       {/* Always mounted so the palette chunk is warm and Radix can play its exit animation. */}
       <Suspense fallback={null}>
@@ -1134,7 +1148,7 @@ export default function ControlPanel({ initialSettingsSection }: ControlPanelPro
                 </div>
               )}
               <RequiredModelsBanner />
-              {usage?.isPastDue && activeView === "home" && (
+              {forkConfig.officialAccountEnabled && usage?.isPastDue && activeView === "home" && (
                 <div className={cn(PAGE_CONTENT_WIDTH_CLASS, "px-6 mb-3")}>
                   <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/50 p-3">
                     <div className="flex items-start gap-3">

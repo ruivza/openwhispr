@@ -94,7 +94,9 @@ export function PrivateDownloadStep() {
   }, [available, modelKey]);
 
   const switchToCloud = useCallback(async (): Promise<void> => {
-    await chooseOnboardingMode('cloud', 'private-download');
+    // Legacy callback name retained; skipping setup never enables official Cloud.
+    // await chooseOnboardingMode('cloud', 'private-download');
+    await chooseOnboardingMode('private', 'private-download');
   }, []);
 
   const continueCloudKeepDownloading = useCallback(async () => {
@@ -123,7 +125,8 @@ export function PrivateDownloadStep() {
         onBack={goBack}
         title="Private mode needs the full app"
         subtitle={getPrivateModeUnavailableMessage()}
-        ctaLabel="Use Cloud instead"
+        // ctaLabel="Use Cloud instead"
+        ctaLabel="Set up models later"
         onCta={switchToCloud}
       >
         <View className="flex-1 items-center justify-center">
@@ -144,7 +147,8 @@ export function PrivateDownloadStep() {
         subtitle={discoveryError}
         ctaLabel="Retry model selection"
         onCta={() => setDiscoveryAttempt((attempt) => attempt + 1)}
-        secondaryCtaLabel="Use Cloud instead"
+        // secondaryCtaLabel="Use Cloud instead"
+        secondaryCtaLabel="Set up models later"
         onSecondaryCta={switchToCloud}
       />
     );
@@ -169,7 +173,8 @@ export function PrivateDownloadStep() {
         ctaLabel={done ? 'Continue with Private' : 'Continue · available when ready'}
         ctaDisabled={!done}
         onCta={() => chooseOnboardingMode('private', 'private-download')}
-        secondaryCtaLabel={done ? 'Use Cloud instead' : "Don't use Private — switch to Cloud"}
+        // secondaryCtaLabel={done ? 'Use Cloud instead' : "Don't use Private — switch to Cloud"}
+        secondaryCtaLabel="Set up models later"
         onSecondaryCta={switchToCloudStop}
       >
         <View className="flex-1 pt-2">

@@ -208,45 +208,73 @@ test("without a complete Google client, authorize fails fast with not_configured
   assert.equal((await setup()).auth.isConfigured(), true);
 });
 
-test("the Gmail client falls back to the calendar client as a pair, never mixing the two", async () => {
+test("Gmail requires its own complete connector OAuth client and never falls back", async () => {
   const { gmailClientCredentials } = await loadAuth();
-  const calendar = {
-    GOOGLE_CALENDAR_CLIENT_ID: "cal-id",
-    GOOGLE_CALENDAR_CLIENT_SECRET: "cal-secret",
+  const none = { clientId: null, clientSecret: null };
+  const official = {
+    GMAIL_CLIENT_ID: "legacy-gmail",
+    GMAIL_CLIENT_SECRET: "legacy-secret",
+    GOOGLE_CALENDAR_CLIENT_ID: "calendar",
+    GOOGLE_CALENDAR_CLIENT_SECRET: "calendar-secret",
   };
-  const NONE = { clientId: null, clientSecret: null };
-  const CALENDAR = { clientId: "cal-id", clientSecret: "cal-secret" };
-
-  assert.deepEqual(gmailClientCredentials({}), NONE);
-  assert.deepEqual(gmailClientCredentials(undefined), NONE);
-  assert.deepEqual(gmailClientCredentials(calendar), CALENDAR);
+  for (const env of [
+    undefined,
+    {},
+    official,
+    { ...official, CONNECTOR_GMAIL_CLIENT_ID: "own-id" },
+    { ...official, CONNECTOR_GMAIL_CLIENT_SECRET: "own-secret" },
+  ])
+    assert.deepEqual(gmailClientCredentials(env), none);
   assert.deepEqual(
     gmailClientCredentials({
-      ...calendar,
-      GMAIL_CLIENT_ID: "gm-id",
-      GMAIL_CLIENT_SECRET: "gm-secret",
+      ...official,
+      CONNECTOR_GMAIL_CLIENT_ID: "own-id",
+      CONNECTOR_GMAIL_CLIENT_SECRET: "own-secret",
     }),
-    { clientId: "gm-id", clientSecret: "gm-secret" }
+    { clientId: "own-id", clientSecret: "own-secret" }
   );
-  // Half a Gmail pair is ignored: an id with another client's secret is a
-  // pair Google refuses (invalid_client).
-  assert.deepEqual(gmailClientCredentials({ ...calendar, GMAIL_CLIENT_ID: "gm-id" }), CALENDAR);
-  assert.deepEqual(
-    gmailClientCredentials({ ...calendar, GMAIL_CLIENT_SECRET: "gm-secret" }),
-    CALENDAR
-  );
-  assert.deepEqual(gmailClientCredentials({ GMAIL_CLIENT_ID: "", ...calendar }), CALENDAR);
-  // No complete pair at all: not configured.
-  assert.deepEqual(gmailClientCredentials({ GMAIL_CLIENT_ID: "gm-id" }), NONE);
-  assert.deepEqual(
-    gmailClientCredentials({
-      GMAIL_CLIENT_ID: "gm-id",
-      GOOGLE_CALENDAR_CLIENT_SECRET: "cal-secret",
-    }),
-    NONE
-  );
-  assert.deepEqual(gmailClientCredentials({ GOOGLE_CALENDAR_CLIENT_ID: "cal-id" }), NONE);
 });
+
+// Original official-account behavior retained for reference.
+// test("the Gmail client falls back to the calendar client as a pair, never mixing the two", async () => {
+//   const { gmailClientCredentials } = await loadAuth();
+//   const calendar = {
+//     GOOGLE_CALENDAR_CLIENT_ID: "cal-id",
+//     GOOGLE_CALENDAR_CLIENT_SECRET: "cal-secret",
+//   };
+//   const NONE = { clientId: null, clientSecret: null };
+//   const CALENDAR = { clientId: "cal-id", clientSecret: "cal-secret" };
+//
+//   assert.deepEqual(gmailClientCredentials({}), NONE);
+//   assert.deepEqual(gmailClientCredentials(undefined), NONE);
+//   assert.deepEqual(gmailClientCredentials(calendar), CALENDAR);
+//   assert.deepEqual(
+//     gmailClientCredentials({
+//       ...calendar,
+//       GMAIL_CLIENT_ID: "gm-id",
+//       GMAIL_CLIENT_SECRET: "gm-secret",
+//     }),
+//     { clientId: "gm-id", clientSecret: "gm-secret" }
+//   );
+//   // Half a Gmail pair is ignored: an id with another client's secret is a
+//   // pair Google refuses (invalid_client).
+//   assert.deepEqual(gmailClientCredentials({ ...calendar, GMAIL_CLIENT_ID: "gm-id" }), CALENDAR);
+//   assert.deepEqual(
+//     gmailClientCredentials({ ...calendar, GMAIL_CLIENT_SECRET: "gm-secret" }),
+//     CALENDAR
+//   );
+//   assert.deepEqual(gmailClientCredentials({ GMAIL_CLIENT_ID: "", ...calendar }), CALENDAR);
+//   // No complete pair at all: not configured.
+//   assert.deepEqual(gmailClientCredentials({ GMAIL_CLIENT_ID: "gm-id" }), NONE);
+//   assert.deepEqual(
+//     gmailClientCredentials({
+//       GMAIL_CLIENT_ID: "gm-id",
+//       GOOGLE_CALENDAR_CLIENT_SECRET: "cal-secret",
+//     }),
+//     NONE
+//   );
+//   assert.deepEqual(gmailClientCredentials({ GOOGLE_CALENDAR_CLIENT_ID: "cal-id" }), NONE);
+// });
 
 test("a grant without gmail.send is revoked, saved nowhere, and fails permission_not_granted", async () => {
   for (const reply of [

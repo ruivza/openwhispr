@@ -8,7 +8,7 @@ const {
   installHookDom,
 } = require("../lib/rendererTestHarness");
 
-test("Insights Sync opt-in changes only device analytics consent", async (t) => {
+test("Insights Sync cannot be enabled even with a legacy opt-in", async (t) => {
   let root = null;
   let hook;
   t.mock.method(console, "error", () => {});
@@ -139,52 +139,68 @@ test("Insights Sync opt-in changes only device analytics consent", async (t) => 
   root = createRoot(container);
   await render();
 
-  assert.equal(await enable(), false);
-  assert.deepEqual(globalThis.__insightsToasts, [
-    { title: "insights.syncEnableError", variant: "destructive" },
-  ]);
+  for (const savedOptIn of [false, true]) {
+    globalThis.__insightsSyncEnabled = savedOptIn;
+    await render();
+    assert.equal(hook.canToggleSync, false);
+    assert.equal(hook.syncAllowedByPolicy, false);
+    assert.equal(await enable(), false);
+    assert.equal(await hook.enableInsightsSync({ confirmWhenEmpty: true }), false);
+  }
+  assert.equal(globalThis.__insightsClaimCalls, 0, "local counters are not claimed for an account");
+  assert.equal(globalThis.__insightsConsentRequests, 0, "no upload prompt is offered");
   assert.deepEqual(globalThis.__insightsSetEnabledValues, []);
   assert.equal(globalThis.__insightsSyncRequests, 0);
+  assert.deepEqual(globalThis.__insightsToasts, []);
 
-  globalThis.__insightsClaimMode = "rejection";
-  assert.equal(await enable(), false);
-  assert.equal(globalThis.__insightsToasts.length, 2);
-  assert.deepEqual(globalThis.__insightsSetEnabledValues, []);
-
-  globalThis.__insightsClaimAccepted = false;
-  const claimCallsBeforeDecline = globalThis.__insightsClaimCalls;
-  assert.equal(await enable(), false);
-  assert.equal(globalThis.__insightsClaimCalls, claimCallsBeforeDecline);
-  assert.equal(globalThis.__insightsToasts.length, 2, "declining consent stays quiet");
-
-  globalThis.__insightsClaimAccepted = true;
-  globalThis.__insightsClaimMode = "success";
-  assert.equal(await enable(), true);
-  assert.deepEqual(globalThis.__insightsSetEnabledValues, [true]);
-  assert.equal(globalThis.__insightsSyncRequests, 1);
-
-  await React.act(async () => hook.disableInsightsSync());
-  assert.deepEqual(globalThis.__insightsSetEnabledValues, [true, false]);
-  assert.equal(globalThis.__insightsSyncRequests, 1);
-
-  await render();
-  globalThis.__insightsClaimMode = "auth-change-success";
-  const settingsWritesBeforeAuthChange = globalThis.__insightsSetEnabledValues.length;
-  assert.equal(await enable(), false);
-  assert.equal(globalThis.__insightsSetEnabledValues.length, settingsWritesBeforeAuthChange);
-
-  globalThis.__insightsAuthGeneration = 7;
-  globalThis.__insightsAwaitingUploadCount = 0;
-  globalThis.__insightsUnclaimedCount = 0;
-  globalThis.__insightsClaimMode = "success";
-  const consentRequestsBeforeEmptyEnable = globalThis.__insightsConsentRequests;
-  const claimCallsBeforeEmptyEnable = globalThis.__insightsClaimCalls;
-  await render();
-  assert.equal(await enable(), true);
-  assert.equal(globalThis.__insightsConsentRequests, consentRequestsBeforeEmptyEnable);
-  assert.equal(globalThis.__insightsClaimCalls, claimCallsBeforeEmptyEnable);
-  assert.equal(globalThis.__insightsSyncRequests, 2);
-
+  // Original cloud opt-in expectations are retained below.
+  //   assert.equal(await enable(), false);
+  //   assert.deepEqual(globalThis.__insightsToasts, [
+  //     { title: "insights.syncEnableError", variant: "destructive" },
+  //   ]);
+  //   assert.deepEqual(globalThis.__insightsSetEnabledValues, []);
+  //   assert.equal(globalThis.__insightsSyncRequests, 0);
+  //
+  //   globalThis.__insightsClaimMode = "rejection";
+  //   assert.equal(await enable(), false);
+  //   assert.equal(globalThis.__insightsToasts.length, 2);
+  //   assert.deepEqual(globalThis.__insightsSetEnabledValues, []);
+  //
+  //   globalThis.__insightsClaimAccepted = false;
+  //   const claimCallsBeforeDecline = globalThis.__insightsClaimCalls;
+  //   assert.equal(await enable(), false);
+  //   assert.equal(globalThis.__insightsClaimCalls, claimCallsBeforeDecline);
+  //   assert.equal(globalThis.__insightsToasts.length, 2, "declining consent stays quiet");
+  //
+  //   globalThis.__insightsClaimAccepted = true;
+  //   globalThis.__insightsClaimMode = "success";
+  //   assert.equal(await enable(), true);
+  //   assert.deepEqual(globalThis.__insightsSetEnabledValues, [true]);
+  //   assert.equal(globalThis.__insightsSyncRequests, 1);
+  //
+  //   await React.act(async () => hook.disableInsightsSync());
+  //   assert.deepEqual(globalThis.__insightsSetEnabledValues, [true, false]);
+  //   assert.equal(globalThis.__insightsSyncRequests, 1);
+  //
+  //   await render();
+  //   globalThis.__insightsClaimMode = "auth-change-success";
+  //   const settingsWritesBeforeAuthChange = globalThis.__insightsSetEnabledValues.length;
+  //   assert.equal(await enable(), false);
+  //   assert.equal(globalThis.__insightsSetEnabledValues.length, settingsWritesBeforeAuthChange);
+  //
+  //   globalThis.__insightsAuthGeneration = 7;
+  //   globalThis.__insightsAwaitingUploadCount = 0;
+  //   globalThis.__insightsUnclaimedCount = 0;
+  //   globalThis.__insightsClaimMode = "success";
+  //   const consentRequestsBeforeEmptyEnable = globalThis.__insightsConsentRequests;
+  //   const claimCallsBeforeEmptyEnable = globalThis.__insightsClaimCalls;
+  //   await render();
+  //   assert.equal(await enable(), true);
+  //   assert.equal(globalThis.__insightsConsentRequests, consentRequestsBeforeEmptyEnable);
+  //   assert.equal(globalThis.__insightsClaimCalls, claimCallsBeforeEmptyEnable);
+  //   assert.equal(globalThis.__insightsSyncRequests, 2);
+  //
+  //
   await React.act(async () => root.unmount());
   root = null;
 });

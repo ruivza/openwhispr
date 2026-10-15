@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useTranslation } from "react-i18next";
+import forkConfig from "../../config/fork.json";
 import { Cloud, Key, Cpu, Network, Building2, ShieldCheck, AlertTriangle } from "../icons";
 import {
   LLM_ENTERPRISE_POLICY_PROVIDER_IDS,
@@ -115,7 +116,11 @@ export default function InferenceConfigEditor({
           icon: <Building2 className="w-4 h-4" />,
         },
       ] as InferenceModeOption[]
-    ).filter((mode) => !allowedModes || allowedModes.includes(mode.id)),
+    ).filter(
+      (mode) =>
+        (forkConfig.hostedServicesEnabled || mode.id !== "openwhispr") &&
+        (!allowedModes || allowedModes.includes(mode.id))
+    ),
     "llm",
     config.mode,
     {
@@ -134,6 +139,7 @@ export default function InferenceConfigEditor({
 
   const handleModeSelect = useCallback(
     (mode: InferenceMode) => {
+      if (mode === "openwhispr" && !forkConfig.hostedServicesEnabled) return;
       if (!isModeAllowed(mode)) return;
       if (mode === "openwhispr" && !isSignedIn) {
         requestSignIn();

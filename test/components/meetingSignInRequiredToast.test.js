@@ -10,7 +10,7 @@ const { createRendererServer, installBrowserGlobals, installHookDom, installMicC
 // A Cloud note recording whose realtime-token request is refused used to toast
 // the server's bare "Invalid session" / "Not authenticated" (#2427).
 
-async function startWithResult(t, startResult) {
+async function startWithResult(t, startResult, officialAccountEnabled = true) {
   let root;
   t.after(async () => {
     if (root) await React.act(async () => root.unmount());
@@ -41,6 +41,10 @@ async function startWithResult(t, startResult) {
   const vite = await createRendererServer(t, {
     cachePrefix: "openwhispr-meeting-sign-in-toast-",
     mockModules: {
+      "/config/fork.json": JSON.stringify({
+        officialAccountEnabled,
+        hostedServicesEnabled: officialAccountEnabled,
+      }),
       "/ui/useToast": `export const useToast = () => ({ toast: (props) => { globalThis.__signInToasts.push(props); return "1"; }, dismiss: () => {} });`,
       "/utils/requestSignIn": `export const requestSignIn = () => { globalThis.__signInRequests += 1; };`,
     },
@@ -74,6 +78,16 @@ for (const code of ["AUTH_EXPIRED", "AUTH_REQUIRED"]) {
     assert.equal(globalThis.__signInRequests, 1);
   });
 }
+
+test("the local build never offers official sign-in after a stale cloud start error", async (t) => {
+  const { toast } = await startWithResult(
+    t,
+    { success: false, error: "Not authenticated", code: "AUTH_REQUIRED" },
+    false
+  );
+  assert.equal(toast.actions, undefined);
+  assert.equal(globalThis.__signInRequests, 0);
+});
 
 test("any other start failure keeps its message and offers no sign-in", async (t) => {
   const { toast } = await startWithResult(t, {

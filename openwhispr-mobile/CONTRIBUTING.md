@@ -104,6 +104,42 @@ In the generated Xcode workspace, select your Apple development team for the mai
 
 Maintainers shipping a separate fork must also replace the organization-specific Expo owner, Apple team, EAS project, update URL, and App Store submission values in `app.base.json` and `eas.json`. Those release settings are separate from the local identity overrides above.
 
+## GitHub unsigned iOS builds
+
+The **Build unsigned iOS app** Actions workflow builds a Release arm64 device archive without Apple signing credentials or an EAS account. It is manually triggered and uploads artifacts, without publishing a release. Its first native build still needs to be run and verified on GitHub.
+
+1. Push the reviewed changes to your fork. Open **Actions → Build unsigned iOS app → Run workflow**.
+2. Enter your own bundle identifier, for example `com.yourname.openwhispr`. Keep this identity for later signing and updates. The build derives `.keyboard`, `.activity`, `group.<bundle identifier>`, and a matching URL scheme from it; the upstream Apple team is omitted only in this unsigned build mode.
+3. Download the `ios-unsigned-<run>-<attempt>` artifact after a successful run. It contains the unsigned IPA, compressed Xcode archive, target entitlements, build information, and SHA-256 checksums. A separate artifact contains native build logs.
+4. Sign the main app **and both extensions** locally using matching bundle identifiers, App Group, certificate, and provisioning profiles, then install the signed IPA. The unsigned IPA cannot be installed directly.
+
+On macOS, use your own Xcode signing setup. On Windows, a tool such as Sideloadly or AltStore Classic can handle sideloading, but this fork's keyboard, App Group, and Live Activity compatibility with third-party re-signing still requires device validation. Re-signing tools that rewrite only identifiers or entitlements can leave shared-container access broken. Inspect `entitlements.json` and keep the containing-app/extension identity relationship intact; do not remove extensions to make installation succeed.
+
+### Local signing with a Mac and developer membership
+
+Sign in to your developer account in Xcode and keep the signing certificate and its private key in the Mac's Keychain. Before the first device build, register the chosen main bundle identifier plus its `.keyboard` and `.activity` App IDs under the same team, and associate all three with `group.<main bundle identifier>`. Prepare a matching provisioning profile for each target, including the test iPhone when the selected distribution method requires registered devices. Check the exported `entitlements.json` for any additional target capabilities required by your profiles.
+
+Download all build artifacts to the Mac and verify them before opening the archive:
+
+```bash
+shasum -a 256 -c SHA256SUMS
+ditto -x -k OpenWhispr-unsigned.xcarchive.zip .
+open OpenWhispr.xcarchive
+```
+
+In Xcode's Organizer, inspect the archive and use **Distribute App** with the appropriate device distribution method and your own signing team/profiles. Apple's [manual signing workflow](https://help.apple.com/xcode/mac/current/en.lproj/devcac6ab5b3.html) assigns a profile to each target. The first archive from this unsigned workflow still needs a real Mac export/signing test; an unsigned archive is not a guarantee that every Xcode version will accept it directly for export. If Xcode rejects the unsigned archive, keep the diagnostic and validate the local signing step rather than changing identifiers or removing extensions. After a signed IPA is available, install it on the registered device through Xcode's Devices and Simulators window and complete the device trust/Developer Mode steps.
+
+After installation, follow the signing tool's device trust and Developer Mode instructions, open the main app to grant microphone access and configure a local model or personal provider, then add the keyboard in iOS Settings. Verify keyboard handoff, shared text, and a meeting/Live Activity on the device before treating the build as ready for use. Personal-account signing may require periodic renewal; this workflow does not change Apple's signing requirements.
+
+The underlying command on macOS is:
+
+```bash
+OPENWHISPR_IOS_BUNDLE_IDENTIFIER=com.yourname.openwhispr \
+  bash scripts/build-ios-unsigned.sh --output-dir build/ios-unsigned
+```
+
+Run it from the repository root after preparing the mobile npm dependencies, reviewed patches, and Bundler dependencies as in the workflow. It uses the existing open font fallback and retains the original configuration in source. It does not sign, submit, or publish an app.
+
 ## Pull Request Checklist
 
 Before submitting:

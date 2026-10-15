@@ -481,12 +481,13 @@ export default function InsightsView({ onSignIn }: InsightsViewProps) {
   const [syncError, setSyncError] = useState(false);
   // A managed workspace that forbids cloud backup forbids these counters with
   // it, so the page stays device-scoped even with the preference left on.
-  const syncActive =
-    isSignedIn &&
-    authValidated &&
-    insightsSyncEnabled &&
-    syncAllowedByPolicy &&
-    dataRetentionEnabled;
+  const syncActive = false; // Insights remain device-scoped.
+  //   const syncActive =
+  //     isSignedIn &&
+  //     authValidated &&
+  //     insightsSyncEnabled &&
+  //     syncAllowedByPolicy &&
+  //     dataRetentionEnabled;
   const claimAvailable = canOfferAnalyticsClaim({
     signedIn: isSignedIn,
     syncAllowedByPolicy,
@@ -494,8 +495,9 @@ export default function InsightsView({ onSignIn }: InsightsViewProps) {
     insightsSyncEnabled,
     unclaimedCount,
   });
-  const showSyncAction =
-    activeTab === "usage" && isSignedIn && authValidated && (!syncActive || claimAvailable);
+  const showSyncAction = false;
+  //   const showSyncAction =
+  //     activeTab === "usage" && isSignedIn && authValidated && (!syncActive || claimAvailable);
   const syncActionDisabled = !canToggleSync || !dataRetentionEnabled || !syncAllowedByPolicy;
   const syncStatusLabel = syncActive
     ? syncError
@@ -511,9 +513,11 @@ export default function InsightsView({ onSignIn }: InsightsViewProps) {
             <TabsTrigger value="usage" variant="pill">
               {t("insights.yourUsage")}
             </TabsTrigger>
+            {/* Leaderboard is disabled with cloud analytics.
             <TabsTrigger value="leaderboard" variant="pill">
               {t("insights.leaderboard.title")}
             </TabsTrigger>
+            */}
           </TabsList>
 
           {activeTab === "usage" ? (

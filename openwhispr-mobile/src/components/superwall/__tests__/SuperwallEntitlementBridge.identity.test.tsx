@@ -128,7 +128,8 @@ describe('SuperwallEntitlementBridge identity sync', () => {
     expect(mockIdentify).not.toHaveBeenCalled();
   });
 
-  it('pushes status and attributes exactly once when the push itself re-renders the tree', async () => {
+  // Original expectation: status and audience attributes were both pushed once.
+  it('pushes entitlement status once and never uploads audience attributes on re-render', async () => {
     mockAuthState = { user: { id: 'user-1' }, isGuest: false, isInitialized: true };
     mockSuperwallUser = { appUserId: billingUserId };
     mockUsage = usageWithBillingId;
@@ -149,6 +150,7 @@ describe('SuperwallEntitlementBridge identity sync', () => {
     triggerRerender = null;
 
     expect(mockSetSubscriptionStatus).toHaveBeenCalledTimes(1);
-    expect(mockUpdate).toHaveBeenCalledTimes(1);
+    // expect(mockUpdate).toHaveBeenCalledTimes(1);
+    expect(mockUpdate).not.toHaveBeenCalled();
   });
 });

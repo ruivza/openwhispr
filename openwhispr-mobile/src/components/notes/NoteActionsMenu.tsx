@@ -1,6 +1,7 @@
 import { Alert, ActivityIndicator, Pressable, useColorScheme } from 'react-native';
 import { MenuView, type MenuAction } from '@react-native-menu/menu';
-import * as Sentry from '@sentry/react-native';
+// import * as Sentry from '@sentry/react-native';
+import { Sentry } from '@/lib/sentry';
 import { SystemIcon } from '@/components/ui/SystemIcon';
 import { GlassCapsule } from '@/components/ui/GlassIconButton';
 import { useNotesStore } from '@/store/useNotesStore';

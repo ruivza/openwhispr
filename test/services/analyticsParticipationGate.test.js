@@ -2,7 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createRendererServer, installBrowserGlobals } = require("../lib/rendererTestHarness");
 
-test("analytics uploads depend on Sync consent, not leaderboard participation", async (t) => {
+test("analytics sync ignores legacy consent without uploading or changing participation", async (t) => {
   t.mock.method(console, "error", () => {});
   t.after(() => {
     for (const key of [
@@ -112,35 +112,47 @@ test("analytics uploads depend on Sync consent, not leaderboard participation", 
     shared: true,
   });
 
-  assert.equal(await service.syncAnalyticsNow(), true);
-  assert.deepEqual(globalThis.__analyticsUploadAllowed, [true]);
-  assert.deepEqual(globalThis.__analyticsSyncContexts, [
-    { accountId: "user_1", authGeneration: 7 },
+  assert.deepEqual(await Promise.all([service.syncAnalyticsNow(), service.syncAnalyticsNow()]), [
+    false,
+    false,
   ]);
-  assert.equal(globalThis.__analyticsParticipationReads, 0);
-  assert.equal(globalThis.__analyticsFlushes, 1, "a durable pending leave is still retried");
-
-  let releaseUpload;
-  globalThis.__analyticsBeforeUpload = new Promise((resolve) => {
-    releaseUpload = resolve;
-  });
-  const inFlight = service.syncAnalyticsNow();
   globalThis.__analyticsLocalConsent = false;
-  releaseUpload();
-  assert.equal(await inFlight, false);
-  assert.equal(
-    globalThis.__analyticsUploadAllowed.at(-1),
-    false,
-    "a local opt-out during a pass wins before rows are uploaded"
-  );
+  assert.equal(await service.syncAnalyticsNow(), false);
+  assert.deepEqual(globalThis.__analyticsUploadAllowed, []);
+  assert.deepEqual(globalThis.__analyticsSyncContexts, []);
   assert.equal(globalThis.__analyticsParticipationReads, 0);
+  assert.equal(globalThis.__analyticsFlushes, 0, "a saved pending leave must stay untouched");
 
-  globalThis.__analyticsBeforeUpload = null;
-  globalThis.__analyticsLocalConsent = true;
-  globalThis.__analyticsSyncFailure = true;
-  assert.equal(
-    await service.syncAnalyticsNow(),
-    false,
-    "a failed foreground upload must not be reported as synchronized"
-  );
+  // Original enabled-cloud expectations are retained below.
+  //   assert.equal(await service.syncAnalyticsNow(), true);
+  //   assert.deepEqual(globalThis.__analyticsUploadAllowed, [true]);
+  //   assert.deepEqual(globalThis.__analyticsSyncContexts, [
+  //     { accountId: "user_1", authGeneration: 7 },
+  //   ]);
+  //   assert.equal(globalThis.__analyticsParticipationReads, 0);
+  //   assert.equal(globalThis.__analyticsFlushes, 1, "a durable pending leave is still retried");
+  //
+  //   let releaseUpload;
+  //   globalThis.__analyticsBeforeUpload = new Promise((resolve) => {
+  //     releaseUpload = resolve;
+  //   });
+  //   const inFlight = service.syncAnalyticsNow();
+  //   globalThis.__analyticsLocalConsent = false;
+  //   releaseUpload();
+  //   assert.equal(await inFlight, false);
+  //   assert.equal(
+  //     globalThis.__analyticsUploadAllowed.at(-1),
+  //     false,
+  //     "a local opt-out during a pass wins before rows are uploaded"
+  //   );
+  //   assert.equal(globalThis.__analyticsParticipationReads, 0);
+  //
+  //   globalThis.__analyticsBeforeUpload = null;
+  //   globalThis.__analyticsLocalConsent = true;
+  //   globalThis.__analyticsSyncFailure = true;
+  //   assert.equal(
+  //     await service.syncAnalyticsNow(),
+  //     false,
+  //     "a failed foreground upload must not be reported as synchronized"
+  //   );
 });

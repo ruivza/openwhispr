@@ -9,16 +9,19 @@ interface ProcessingModeState {
 }
 
 export const useProcessingModeStore = create<ProcessingModeState>((set) => ({
-  activeMode: 'cloud',
+  // activeMode: 'cloud',
+  activeMode: 'private',
   isUserOverride: false,
   setActiveMode: (mode, userInitiated = false) =>
     set({
-      activeMode: mode,
+      // activeMode: mode,
+      activeMode: mode === 'cloud' ? 'private' : mode,
       isUserOverride: userInitiated,
     }),
   resetToDefault: (mode) =>
     set({
-      activeMode: mode,
+      // activeMode: mode,
+      activeMode: mode === 'cloud' ? 'private' : mode,
       isUserOverride: false,
     }),
 }));

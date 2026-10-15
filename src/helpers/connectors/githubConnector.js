@@ -4,6 +4,7 @@
 // Send commits exactly what the card shows, re-checked here first.
 const { createGithubApi } = require("./githubApi");
 const { createGithubAuth } = require("./githubAuth");
+const { configuredString } = require("./localOAuthConfig");
 const { createGithubInstallations, REFETCH_AFTER_MS } = require("./githubInstallations");
 const { isTransportErrorCode } = require("./deliveryClassifier");
 const { formBody } = require("./providerHttp");
@@ -1064,7 +1065,11 @@ function buildGithubConnector(deps) {
   const auth = createGithubAuth({
     api,
     credentials: deps.credentials,
-    getClientId: () => deps.env?.GITHUB_APP_CLIENT_ID,
+    getClientId: () =>
+      SLUG_PATTERN.test(configuredString(deps.env?.CONNECTOR_GITHUB_APP_SLUG) ?? "")
+        ? configuredString(deps.env?.CONNECTOR_GITHUB_APP_CLIENT_ID)
+        : null,
+    // getClientId: () => deps.env?.GITHUB_APP_CLIENT_ID,
     broadcast: deps.broadcast,
     logger: deps.logger,
   });
@@ -1073,7 +1078,8 @@ function buildGithubConnector(deps) {
     auth,
     installations: createGithubInstallations({ api }),
     credentials: deps.credentials,
-    getSlug: () => deps.env?.GITHUB_APP_SLUG,
+    getSlug: () => configuredString(deps.env?.CONNECTOR_GITHUB_APP_SLUG),
+    // getSlug: () => deps.env?.GITHUB_APP_SLUG,
     notifyStatusChanged: deps.notifyStatusChanged,
   });
 }

@@ -124,6 +124,9 @@ final class ProviderRequestTransport: NSObject, URLSessionTaskDelegate {
   static func isAllowedURL(_ url: URL) -> Bool {
     guard let scheme = url.scheme?.lowercased(), let host = url.host?.lowercased(),
           !host.isEmpty, url.user == nil, url.password == nil, url.fragment == nil else { return false }
+    // A stale BYOK route or a native caller must not bypass the JS hosted guard.
+    let normalizedHost = host.trimmingCharacters(in: CharacterSet(charactersIn: "."))
+    if normalizedHost == "openwhispr.com" || normalizedHost.hasSuffix(".openwhispr.com") { return false }
     if scheme == "https" { return true }
     return scheme == "http" && isPrivateHost(host)
   }

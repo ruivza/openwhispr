@@ -1285,7 +1285,12 @@ function loadLoopbackFlow() {
   const Module = require("node:module");
   const originalLoad = Module._load;
   Module._load = function loadWithElectronStub(request, parent, isMain) {
-    if (request === "electron") return { shell: { openExternal: async () => {} } };
+    if (request === "electron")
+      return {
+        app: { isPackaged: false, isReady: () => false },
+        shell: { openExternal: async () => {} },
+      };
+    // if (request === "electron") return { shell: { openExternal: async () => {} } };
     return originalLoad.call(this, request, parent, isMain);
   };
   try {

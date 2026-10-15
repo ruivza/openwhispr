@@ -261,6 +261,11 @@ export function getOnboardingRoute(context: OnboardingRouteContext): OnboardingS
   return route;
 }
 
+/** Retain the original account route while omitting its login screen locally. */
+export function getLocalOnboardingRoute(context: OnboardingRouteContext): OnboardingStepId[] {
+  return getOnboardingRoute({ ...context, authPath: "guest" }).filter((step) => step !== "auth");
+}
+
 /**
  * The Notes step's forward action. Calendar connections are optional, so the step
  * offers Skip until one connects and Continue afterwards. "loading" is its own

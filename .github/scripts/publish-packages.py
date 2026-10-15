@@ -1,5 +1,6 @@
 """Publish package files from a verified tag build; never execute artifact contents."""
 
+import base64
 import hashlib
 import json
 import os
@@ -8,6 +9,9 @@ import re
 import shutil
 import subprocess
 import tempfile
+
+
+RELEASE_REPOSITORY = "ruivza/openwhispr"
 
 
 def gh(*args):
@@ -36,7 +40,9 @@ def validate_run(run, repository, tag_commit):
 
 def select_packages(root, version):
     packages = []
-    for platform, endings in (("windows", (".exe",)), ("linux", (".AppImage", ".deb", ".rpm", ".tar.gz"))):
+    # Previously only installers were published, dropping NSIS differential maps.
+    # for platform, endings in (("windows", (".exe",)), ("linux", (".AppImage", ".deb", ".rpm", ".tar.gz"))):
+    for platform, endings in (("windows", (".exe", ".exe.blockmap")), ("linux", (".AppImage", ".deb", ".rpm", ".tar.gz"))):
         selected = [p for p in (root / platform).iterdir()
                     if p.is_file() and not p.is_symlink() and p.name.endswith(endings)]
         if not selected or any(version not in p.name for p in selected):
@@ -69,6 +75,42 @@ def stage_packages(packages, destination):
     return staged
 
 
+def update_manifests(packages, version, destination):
+    """Build updater metadata from the final asset bytes and GitHub-safe names.
+
+    JSON is a YAML subset understood by electron-updater's YAML loader. Using
+    it keeps the isolated publishing job free of third-party parser installs.
+    SHA256SUMS is for manual verification; the updater consumes these SHA512s.
+    """
+    manifests = []
+    for ending, channel in ((".exe", "latest.yml"), (".AppImage", "latest-linux.yml")):
+        installers = [p for p in packages if p.name.endswith(ending)]
+        if len(installers) != 1:
+            raise ValueError("Exactly one current-architecture " + ending + " update is required")
+        package = installers[0]
+        digest = hashlib.sha512()
+        with package.open("rb") as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(chunk)
+        checksum = base64.b64encode(digest.digest()).decode("ascii")
+        file_info = {"url": package.name, "sha512": checksum, "size": package.stat().st_size}
+        # AppImages carry their differential map in the file followed by its
+        # four-byte big-endian length. Keep that metadata when it is present.
+        if ending == ".AppImage" and file_info["size"] > 4:
+            with package.open("rb") as source:
+                source.seek(-4, 2)
+                blockmap_size = int.from_bytes(source.read(4), "big")
+            if 0 < blockmap_size <= file_info["size"] - 4:
+                file_info["blockMapSize"] = blockmap_size
+        info = {"version": version,
+                "files": [file_info],
+                "path": package.name, "sha512": checksum}
+        path = destination / channel
+        path.write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
+        manifests.append(path)
+    return manifests
+
+
 def release_info(repository, tag):
     try:
         return api(f"repos/{repository}/releases/tags/{tag}")
@@ -78,6 +120,8 @@ def release_info(repository, tag):
 
 
 def upload_packages(repository, tag, packages):
+    if repository != RELEASE_REPOSITORY:
+        raise ValueError("This fork publishes updates only to " + RELEASE_REPOSITORY)
     release = release_info(repository, tag)
     if release is None:
         try:
@@ -115,7 +159,9 @@ def upload_packages(repository, tag, packages):
 def main():
     repository = os.environ["RELEASE_REPOSITORY"]
     run_id = os.environ["BUILD_RUN_ID"]
-    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository) or not run_id.isdigit():
+    # The former generic OWNER/REPO validation allowed publishing upstream.
+    # if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository) or not run_id.isdigit():
+    if repository != RELEASE_REPOSITORY or not run_id.isdigit():
         raise ValueError("Invalid repository or build ID")
     run = api(f"repos/{repository}/actions/runs/{run_id}")
     candidate = run.get("head_branch", "")
@@ -130,11 +176,13 @@ def main():
             gh("run", "download", run_id, "--repo", repository,
                "--name", artifact, "--dir", str(root / platform))
         packages = stage_packages(select_packages(root, tag[1:]), root / "packages")
+        manifests = update_manifests(packages, tag[1:], root / "packages")
         checksums = root / "SHA256SUMS-windows-linux"
         checksums.write_text("".join(sha256(p) + "  " + p.name + "\n" for p in packages))
         if api(f"repos/{repository}/commits/{tag}")["sha"] != commit:
             raise ValueError("Remote tag changed during download")
-        upload_packages(repository, tag, [*packages, checksums])
+        # Publish update metadata last: it must never refer to a missing payload.
+        upload_packages(repository, tag, [*packages, checksums, *manifests])
 
 
 if __name__ == "__main__":

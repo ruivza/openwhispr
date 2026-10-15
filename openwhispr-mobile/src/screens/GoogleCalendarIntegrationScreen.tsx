@@ -389,16 +389,16 @@ export default function GoogleCalendarIntegrationScreen() {
   const setAuthSessionActive = useGoogleCalendarStore((state) => state.setAuthSessionActive);
 
   useEffect(() => {
-    if (user) {
-      load().catch(() => undefined);
-    }
+    // if (user) { load().catch(() => undefined); }
+    // Connect directly to the user's Google account, without official auth.
+    load().catch(() => undefined);
   }, [load, user]);
 
   const handleConnect = useCallback(async () => {
-    if (!user) {
-      Alert.alert('Sign in required', 'Sign in to connect Google Calendar.');
-      return;
-    }
+//     if (!user) {
+//       Alert.alert('Sign in required', 'Sign in to connect Google Calendar.');
+//       return;
+//     }
     if (!IS_IOS) {
       Alert.alert('Not available', 'Google Calendar integration is available on iOS.');
       return;
@@ -524,25 +524,25 @@ export default function GoogleCalendarIntegrationScreen() {
     );
   }
 
-  if (!user) {
-    return (
-      <SettingsScreen>
-        <Notice
-          title="Sign in required"
-          message="Google Calendar can be connected from an OpenWhispr account."
-        />
-        <View className="mx-4">
-          <ActionButton
-            label="Sign In"
-            icon="person.crop.circle.badge.plus"
-            mdIcon="UserPlus"
-            onPress={() => router.replace('/')}
-          />
-        </View>
-      </SettingsScreen>
-    );
-  }
-
+//   if (!user) {
+//     return (
+//       <SettingsScreen>
+//         <Notice
+//           title="Sign in required"
+//           message="Google Calendar can be connected from an OpenWhispr account."
+//         />
+//         <View className="mx-4">
+//           <ActionButton
+//             label="Sign In"
+//             icon="person.crop.circle.badge.plus"
+//             mdIcon="UserPlus"
+//             onPress={() => router.replace('/')}
+//           />
+//         </View>
+//       </SettingsScreen>
+//     );
+//   }
+//
   return (
     <SettingsScreen>
       {error ? <Notice title="Google Calendar error" message={error} tone="error" /> : null}

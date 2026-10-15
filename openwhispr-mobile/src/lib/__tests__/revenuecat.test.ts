@@ -35,6 +35,13 @@ describe('RevenueCat StoreKit helpers', () => {
     mockPurchases.getStorefront.mockResolvedValue({ countryCode: 'DEU' });
 
     await expect(getAppStorefrontCountryCode()).resolves.toBe('DEU');
+    expect(mockPurchases.configure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        diagnosticsEnabled: false,
+        automaticDeviceIdentifierCollectionEnabled: false,
+        purchasesAreCompletedBy: { type: 'MY_APP', storeKitVersion: 'STOREKIT_2' },
+      }),
+    );
   });
 
   it('returns null when storefront lookup fails', async () => {

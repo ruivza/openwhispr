@@ -26,7 +26,7 @@ function connectorDeps(overrides = {}) {
     OAuthFlowError: FakeFlowError,
     credentials: memoryCredentials(null, { connectorId: "linear" }),
     logger: silentLogger,
-    env: {},
+    env: { CONNECTOR_LINEAR_OAUTH_REDIRECT_URI: "https://relay.example.test/linear/callback" },
     openExternal: async () => {},
     writeClipboard: () => {},
     getGoogleCalendarAccounts: () => [],
@@ -44,14 +44,19 @@ test("buildLinearConnector reads the client id at each use, not once at startup"
 
   assert.equal(connector.id, "linear");
   assert.equal((await connector.getStatus()).configured, false);
-  deps.env.LINEAR_CLIENT_ID = "client-1";
+  deps.env.CONNECTOR_LINEAR_CLIENT_ID = "client-1";
   assert.equal((await connector.getStatus()).configured, true);
 });
 
 test("buildLinearConnector signs in through the loopback flow and ends on Linear's own page", async () => {
   const { buildLinearConnector } =
     await import("../../../src/helpers/connectors/linearConnector.js");
-  const { deps, flows } = connectorDeps({ env: { LINEAR_CLIENT_ID: "client-1" } });
+  const { deps, flows } = connectorDeps({
+    env: {
+      CONNECTOR_LINEAR_CLIENT_ID: "client-1",
+      CONNECTOR_LINEAR_OAUTH_REDIRECT_URI: "https://relay.example.test/linear/callback",
+    },
+  });
   const connector = buildLinearConnector(deps);
 
   void connector.authorize({ signal: new AbortController().signal });
@@ -76,7 +81,10 @@ test("buildLinearConnector sends Linear's requests through the shared fetch", as
   const { buildLinearConnector } =
     await import("../../../src/helpers/connectors/linearConnector.js");
   const { deps, fetched } = connectorDeps({
-    env: { LINEAR_CLIENT_ID: "client-1" },
+    env: {
+      CONNECTOR_LINEAR_CLIENT_ID: "client-1",
+      CONNECTOR_LINEAR_OAUTH_REDIRECT_URI: "https://relay.example.test/linear/callback",
+    },
     credentials: memoryCredentials(CONNECTED, { connectorId: "linear" }),
   });
   const connector = buildLinearConnector(deps);

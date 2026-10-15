@@ -19,29 +19,31 @@ export async function chooseOnboardingMode(
   mode: 'cloud' | 'private',
   from: 'privacy-mode' | 'private-download',
 ): Promise<void> {
+  // Official Cloud selections from old screens resume as local setup.
+  if (mode === 'cloud') mode = 'private';
   if (useOnboardingStore.getState().currentStep !== from) return;
-  const auth = useAuthStore.getState();
-  if (mode === 'cloud' && !auth.user) {
-    // Guests declined an account, and a device that synced one must not get a new identity (its
-    // first sync would read as an account switch and wipe that account's notes), so neither opens
-    // a session during setup. On the download step Cloud is their only way past a download that
-    // can't finish, so it's saved for after sign-in instead of refused.
-    if (auth.isGuest || hasRealAccountHistory()) {
-      if (from !== 'private-download')
-        throw new OnboardingError(
-          auth.isGuest
-            ? 'Cloud needs an account. Use Local for now, or sign in after setup.'
-            : 'Cloud needs you signed in. Use Local for now, or sign in after setup.',
-        );
-    } else {
-      await auth.ensureAnonymousSession();
-      if (!useAuthStore.getState().user) {
-        throw new OnboardingError(
-          'Cloud needs a connection to set up. Try again or use Local for now.',
-        );
-      }
-    }
-  }
+//   const auth = useAuthStore.getState();
+//   if (mode === 'cloud' && !auth.user) {
+//     // Guests declined an account, and a device that synced one must not get a new identity (its
+//     // first sync would read as an account switch and wipe that account's notes), so neither opens
+//     // a session during setup. On the download step Cloud is their only way past a download that
+//     // can't finish, so it's saved for after sign-in instead of refused.
+//     if (auth.isGuest || hasRealAccountHistory()) {
+//       if (from !== 'private-download')
+//         throw new OnboardingError(
+//           auth.isGuest
+//             ? 'Cloud needs an account. Use Local for now, or sign in after setup.'
+//             : 'Cloud needs you signed in. Use Local for now, or sign in after setup.',
+//         );
+//     } else {
+//       await auth.ensureAnonymousSession();
+//       if (!useAuthStore.getState().user) {
+//         throw new OnboardingError(
+//           'Cloud needs a connection to set up. Try again or use Local for now.',
+//         );
+//       }
+//     }
+//   }
   if (useOnboardingStore.getState().currentStep !== from) return;
   const config = useConfigStore.getState().config ?? null;
   const previous = {

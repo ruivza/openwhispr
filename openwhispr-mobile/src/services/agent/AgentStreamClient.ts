@@ -10,6 +10,7 @@ import {
 import { parseApiErrorBody } from '@/lib/apiErrorBody';
 import { withRetry } from '@/lib/retry';
 import { stripThinkingTags } from '@/services/reasoning/buildProviderPrompt';
+import { requireHostedServices } from '@/lib/fork';
 
 // Single budget for the entire streaming call: connect + receive.
 const AGENT_STREAM_TIMEOUT_MS = 55_000;
@@ -167,7 +168,8 @@ export async function streamAgentText(options: StreamAgentTextOptions): Promise<
   const selection = options.inferenceRoute ?? getInferenceSelection('agent');
   if (selection?.mode === 'local')
     throw new Error(
-      'On-device keyboard composition is not available. Choose a provider or OpenWhispr Cloud.',
+      // 'On-device keyboard composition is not available. Choose a provider or OpenWhispr Cloud.',
+      'On-device keyboard composition is not available. Choose a provider in AI Models.',
     );
   if (selection?.mode === 'providers') {
     const route = await resolveMobileProviderRoute('agent', options.inferenceRoute);
@@ -197,6 +199,7 @@ export async function streamAgentText(options: StreamAgentTextOptions): Promise<
     }
   }
 
+  requireHostedServices();
   const shouldRetry = (error: unknown): boolean => {
     // Never retry a cancelled/superseded call — the abort was intentional
     // (external signal or the composer's supersede rule), so a retry would just

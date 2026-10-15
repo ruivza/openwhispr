@@ -23,14 +23,16 @@ interface ConnectorsSectionProps {
 
 export function ConnectorsSection({ onUpgrade }: ConnectorsSectionProps): ReactElement {
   const { t } = useTranslation();
-  const { isPaid, blockedByOrg, connectorsAllowed } = useConnectorAccess();
+  // const { isPaid, blockedByOrg, connectorsAllowed } = useConnectorAccess();
+  const { available, blockedByOrg, connectorsAllowed } = useConnectorAccess();
   const emailDraftTarget = useSettingsStore((state) => state.emailDraftTarget);
   const setEmailDraftTarget = useSettingsStore((state) => state.setEmailDraftTarget);
   const gcalConnected = useSettingsStore((state) => state.gcalConnected);
   const mcalAccounts = useSettingsStore((state) => state.mcalAccounts);
   const gmail = useConnectorStatusStore((state) => state.statuses.gmail);
   const gmailStatus = gmailSendStatus(gmail);
-  const showActions = isPaid && connectorsAllowed;
+  // const showActions = isPaid && connectorsAllowed;
+  const showActions = available && connectorsAllowed;
 
   // Sending from chat needs a working Gmail login; a build without a Google
   // client never offers it.
@@ -58,18 +60,19 @@ export function ConnectorsSection({ onUpgrade }: ConnectorsSectionProps): ReactE
   };
 
   // A free plan sees what drafting does, dimmed; the one upsell sits above the list.
-  const locked = !isPaid && !blockedByOrg;
+  // const locked = !isPaid && !blockedByOrg;
+  const locked = !available && !blockedByOrg;
   const description = blockedByOrg
     ? t("connectors.policyOff")
-    : isPaid && !connectorsAllowed
+    : available && !connectorsAllowed
       ? t("connectors.email.unavailable")
-      : isPaid && currentTarget === "gmailSend"
+      : available && currentTarget === "gmailSend"
         ? t("connectors.email.descriptionSend")
         : t("connectors.email.description");
 
   return (
     <div className="space-y-3">
-      {locked && <UpsellBar message={t("connectors.upsell")} onUpgrade={onUpgrade} />}
+      {/* Original paid upsell: locked && <UpsellBar message={t("connectors.upsell")} onUpgrade={onUpgrade} /> */}
       <SettingsPanel>
         <SettingsPanelRow>
           <div className={`flex flex-wrap items-center gap-3 ${locked ? "opacity-60" : ""}`}>
@@ -131,7 +134,13 @@ export function ConnectorsSection({ onUpgrade }: ConnectorsSectionProps): ReactE
           </div>
         </SettingsPanelRow>
         {CONNECTOR_ROWS.map((row) => (
-          <ConnectorLoginRow key={row.id} row={row} isPaid={isPaid} blockedByOrg={blockedByOrg} />
+          // Original paid gate: isPaid={isPaid}.
+          <ConnectorLoginRow
+            key={row.id}
+            row={row}
+            available={available && connectorsAllowed}
+            blockedByOrg={blockedByOrg}
+          />
         ))}
       </SettingsPanel>
     </div>

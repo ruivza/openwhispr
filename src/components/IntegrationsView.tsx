@@ -20,6 +20,7 @@ import {
   sectionMeta,
   type IntegrationsSection,
   type SectionMeta,
+  DEFAULT_INTEGRATIONS_SECTION,
 } from "./integrations/integrationsSections";
 
 const API_DOCS_URL = "https://docs.openwhispr.com/api/overview";
@@ -35,9 +36,13 @@ interface IntegrationsViewProps {
 export default function IntegrationsView({
   isPaid,
   onUpgrade,
-  section,
+  section: requestedSection,
   onSectionChange,
 }: IntegrationsViewProps): ReactElement {
+  // Stale hosted API deep links resolve to an available local integration.
+  const section = INTEGRATIONS_SECTIONS.includes(requestedSection)
+    ? requestedSection
+    : DEFAULT_INTEGRATIONS_SECTION;
   const { t } = useTranslation();
   const isMac = window.electronAPI?.getPlatform?.() === "darwin";
   const connectorAccess = useConnectorAccess();
@@ -162,10 +167,12 @@ export default function IntegrationsView({
         title={titleOf("mcp")}
         isPaid={isPaid}
         onUpgrade={onUpgrade}
-        onCreateKey={() => {
-          setCreateKeyRequest((request) => request + 1);
-          openSection("api");
-        }}
+        // Original hosted MCP setup opened API key creation:
+        // onCreateKey={() => {
+        //   setCreateKeyRequest((request) => request + 1);
+        //   openSection("api");
+        // }}
+        onCreateKey={() => {}}
       />
     ),
     cli: <CliPane title={titleOf("cli")} isPaid={isPaid} onUpgrade={onUpgrade} />,

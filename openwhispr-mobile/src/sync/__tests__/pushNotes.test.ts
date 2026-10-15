@@ -1,3 +1,5 @@
+// Business tests spy on the local diagnostic adapter; its no-op behavior is tested separately.
+jest.mock('@/lib/sentry', () => ({ Sentry: jest.requireMock('@sentry/react-native') }));
 // The real apiClient.ts pulls in expo/fetch + useAuthStore (which pulls in
 // better-auth, an ESM-only package jest can't transform). Mock a lightweight
 // stand-in for ApiError instead — same approach as AccountScreen.billing.test.tsx.
@@ -57,7 +59,8 @@ import {
   updateNote as updateNoteRemote,
   deleteNote,
 } from '@/data/remote/notesApi';
-import * as Sentry from '@sentry/react-native';
+// import * as Sentry from '@sentry/react-native';
+import { Sentry } from '@/lib/sentry';
 import { serializeSegmentsForSync } from '@/lib/notes/remoteTranscript';
 import { ApiError } from '@/lib/apiClient';
 import type { Note, Segment, Speaker } from '@/data/types';
@@ -102,8 +105,7 @@ const note = (overrides: Partial<Note> = {}): Note =>
 beforeEach(() => {
   mockNotesRepository.getNoteById.mockImplementation((id) => {
     const pending = mockNotesRepository.getPendingNotes.mock.results.at(-1)?.value as
-      | Note[]
-      | undefined;
+      Note[] | undefined;
     return pending?.find((row) => row.id === id) ?? null;
   });
 });

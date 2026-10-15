@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import forkConfig from "../config/fork.json";
 import { AlertCircle } from "./icons";
 import { CompactAuthenticationFlow } from "./CompactAuthenticationFlow";
 import UseCaseStep from "./onboarding/UseCaseStep";
@@ -49,7 +50,8 @@ import {
   getNextOnboardingStep,
   getNotesFooterAction,
   getOnboardingProgress,
-  getOnboardingRoute,
+  getOnboardingRoute as getAccountOnboardingRoute,
+  getLocalOnboardingRoute,
   isSetupDecisionStep,
   reconcileStepWithRoute,
   resetOnboardingProgress,
@@ -73,6 +75,11 @@ import { clearPendingLocalModels, hasPendingLocalModels } from "./onboarding/pen
 import { resolveAssistantDemoScenario } from "./onboarding/assistantDemoScenario";
 import { ActivationModeSelector } from "./ui/ActivationModeSelector";
 import LinuxPttSetupInfo from "./ui/LinuxPttSetupInfo";
+
+// Original account flow remains available when its services are enabled.
+const getOnboardingRoute = forkConfig.officialAccountEnabled
+  ? getAccountOnboardingRoute
+  : getLocalOnboardingRoute;
 
 interface OnboardingFlowProps {
   onComplete: (options?: { openSettings?: boolean }) => void;
@@ -726,6 +733,7 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
 
   const handleSetupSelection = useCallback(
     async (mode: Exclude<OnboardingSetupMode, null>, options?: { selfHosted?: boolean }) => {
+      if (mode === "cloud" && !forkConfig.hostedServicesEnabled) return;
       setSetupMode(mode);
       setSelfHostedRequested(!!options?.selfHosted);
       if (mode === "cloud") {

@@ -16,6 +16,7 @@ import {
 import SidebarModal, { type SidebarItem } from "./ui/SidebarModal";
 import SettingsPage, { AccountAvatar, SettingsSectionType } from "./SettingsPage";
 import { useAuth } from "../hooks/useAuth";
+import forkConfig from "../config/fork.json";
 
 export type { SettingsSectionType };
 
@@ -127,11 +128,21 @@ export default function SettingsModal({ open, onOpenChange, initialSection }: Se
         group: t("settingsModal.groups.system"),
       },
     ];
-    return isSignedIn ? items : items.filter((item) => item.id !== "workspace");
+    // Original: isSignedIn ? items : items.filter((item) => item.id !== "workspace").
+    return items.filter((item) => {
+      if (!forkConfig.officialAccountEnabled && ["account", "plansBilling"].includes(item.id))
+        return false;
+      if (item.id === "workspace") return forkConfig.hostedServicesEnabled && isSignedIn;
+      return true;
+    });
   }, [t, isSignedIn]);
 
   const resolveSection = (section: string | undefined): SettingsSectionType => {
-    if (!section) return "account";
+    // Original initial section: "account".
+    if (!section) return forkConfig.officialAccountEnabled ? "account" : "general";
+    if (!forkConfig.officialAccountEnabled && ["account", "plansBilling"].includes(section))
+      return "general";
+    if (!forkConfig.hostedServicesEnabled && section === "workspace") return "general";
     return (SECTION_ALIASES[section] ?? section) as SettingsSectionType;
   };
 

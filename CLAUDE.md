@@ -8,6 +8,14 @@ Keep responses focused, brief, and concise. Keep disclaimers and caveats short, 
 
 ## Project Overview
 
+### Fork behavior
+
+`src/config/fork.json` disables official accounts and hosted services in this fork. Desktop startup and inference use local/BYOK routes; retained official implementations below are historical reference and must not be re-enabled implicitly. Mobile uses the equivalent local-build guards in `openwhispr-mobile/src/lib/fork.ts`.
+
+Connectors use an independent device profile and the owner's `CONNECTOR_*` OAuth applications from `.env.example`, with no official subscription or account requirement. Provider permissions, confirmation before sending, cancellation and credential isolation still apply. Slack/Linear can use `scripts/connector-oauth-relay.js` behind the owner's HTTPS reverse proxy. Updates are published to `ruivza/openwhispr`; no publishing or signing credentials are included.
+
+The MCP integration provides local stdio client configuration using the bundled Electron runtime. `src/helpers/localMcpServer.js` adapts the existing authenticated loopback CLI bridge; keep the desktop application running. Credentials are read from the existing bridge discovery file at tool-call time and are never included in client configuration. This entry is for local MCP clients, with no official login or subscription. AppImage builds cannot provide stable executable/script paths across restarts and are currently unsupported for MCP.
+
 OpenWhispr is an Electron-based desktop dictation application that uses whisper.cpp for speech-to-text transcription. It supports both local (privacy-focused) and cloud (OpenAI API) processing modes.
 
 ## Architecture Overview

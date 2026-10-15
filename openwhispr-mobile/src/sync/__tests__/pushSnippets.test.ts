@@ -1,3 +1,5 @@
+// Business tests spy on the local diagnostic adapter; its no-op behavior is tested separately.
+jest.mock('@/lib/sentry', () => ({ Sentry: jest.requireMock('@sentry/react-native') }));
 // pushSnippets.ts talks to drizzle directly (not through notesRepository).
 // See pushDictionary.test.ts for why a minimal fluent chain stands in for
 // `db` here instead of a full mock.
@@ -43,7 +45,8 @@ jest.mock('@/data/remote/snippetsApi', () => ({
 import { pushSnippets } from '../pushSnippets';
 import { SyncCancelledError } from '../syncContext';
 import { batchCreateSnippets, updateSnippet, deleteSnippet } from '@/data/remote/snippetsApi';
-import * as Sentry from '@sentry/react-native';
+// import * as Sentry from '@sentry/react-native';
+import { Sentry } from '@/lib/sentry';
 
 const mockBatchCreate = batchCreateSnippets as jest.Mock;
 const mockUpdate = updateSnippet as jest.Mock;

@@ -2,6 +2,7 @@
 // gmailOAuth.js (Gabriel Stein). Plan 3 adds the granted-scope and verified-
 // email checks, the refresh bound to one login, and revoking the grant.
 const { createBoundLogin } = require("./boundLogin");
+const { configuredString } = require("./localOAuthConfig");
 
 const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 // gmail.send is Google's only sensitive (not restricted) Gmail scope. Any
@@ -42,14 +43,17 @@ const DOMAIN_POLICY_ERRORS = new Set(["admin_policy_enforced", "org_internal"]);
 // secrets. The fallback is pair-wise: an id from one client with another's
 // secret is a pair Google refuses (invalid_client), so half a pair is ignored.
 function gmailClientCredentials(env) {
-  for (const [idKey, secretKey] of [
-    ["GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET"],
-    ["GOOGLE_CALENDAR_CLIENT_ID", "GOOGLE_CALENDAR_CLIENT_SECRET"],
-  ]) {
-    const clientId = env?.[idKey];
-    const clientSecret = env?.[secretKey];
-    if (clientId && clientSecret) return { clientId, clientSecret };
-  }
+  const clientId = configuredString(env?.CONNECTOR_GMAIL_CLIENT_ID);
+  const clientSecret = configuredString(env?.CONNECTOR_GMAIL_CLIENT_SECRET);
+  if (clientId && clientSecret) return { clientId, clientSecret };
+  // for (const [idKey, secretKey] of [
+  //   ["GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET"],
+  //   ["GOOGLE_CALENDAR_CLIENT_ID", "GOOGLE_CALENDAR_CLIENT_SECRET"],
+  // ]) {
+  //   const clientId = env?.[idKey];
+  //   const clientSecret = env?.[secretKey];
+  //   if (clientId && clientSecret) return { clientId, clientSecret };
+  // }
   return { clientId: null, clientSecret: null };
 }
 

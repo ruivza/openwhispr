@@ -18,8 +18,12 @@ function makeAutoUpdater({ offline = false } = {}) {
   const autoUpdater = {
     calls: 0,
     downloads: 0,
+    installs: [],
     listeners,
-    setFeedURL() {},
+    feeds: [],
+    setFeedURL(feed) {
+      autoUpdater.feeds.push(feed);
+    },
     on(event, handler) {
       listeners[event] = handler;
     },
@@ -37,6 +41,9 @@ function makeAutoUpdater({ offline = false } = {}) {
     downloadUpdate() {
       autoUpdater.downloads += 1;
       return Promise.resolve();
+    },
+    quitAndInstall(...args) {
+      autoUpdater.installs.push(args);
     },
   };
   return autoUpdater;
@@ -102,6 +109,34 @@ test("startup and periodic checks run whether or not automatic updates are on", 
     manager.cleanup();
     t.mock.timers.reset();
   }
+});
+
+test("runtime and packaged update sources point only at this fork", () => {
+  const autoUpdater = makeAutoUpdater();
+  const manager = createUpdateManager(autoUpdater);
+  const expected = { provider: "github", owner: "ruivza", repo: "openwhispr", private: false };
+  assert.deepEqual(autoUpdater.feeds, [expected]);
+  const { releaseType, ...packagedFeed } = require("../../electron-builder.json").publish;
+  assert.deepEqual(packagedFeed, expected);
+  assert.equal(releaseType, "draft");
+  manager.cleanup();
+});
+
+test("manual checks, download and installation remain available with automatic updates off", async () => {
+  setPlatform("win32");
+  const autoUpdater = makeAutoUpdater();
+  const manager = createUpdateManager(autoUpdater);
+  manager.setAutoUpdatesEnabled(false);
+  await manager.checkForUpdates();
+  assert.equal(autoUpdater.calls, 1);
+  autoUpdater.listeners["update-available"]({ version: "9.9.9" });
+  assert.equal(autoUpdater.downloads, 0);
+  assert.equal((await manager.downloadUpdate()).success, true);
+  assert.equal(autoUpdater.downloads, 1);
+  autoUpdater.listeners["update-downloaded"]({ version: "9.9.9" });
+  assert.equal((await manager.installUpdate()).success, true);
+  assert.deepEqual(autoUpdater.installs, [[true, true]]);
+  manager.cleanup();
 });
 
 test("before the renderer syncs the preference, an available update is not downloaded", () => {

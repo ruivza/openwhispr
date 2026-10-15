@@ -1,3 +1,5 @@
+// Business tests spy on the local diagnostic adapter; its no-op behavior is tested separately.
+jest.mock('@/lib/sentry', () => ({ Sentry: jest.requireMock('@sentry/react-native') }));
 // pushDictionary.ts talks to drizzle directly (not through notesRepository).
 // A minimal fluent chain stands in for `db` so tests never touch SQLite;
 // `select().from().where().all()` returns the configured pending rows and
@@ -50,7 +52,8 @@ import {
   updateDictionaryEntry,
   deleteDictionaryEntry,
 } from '@/data/remote/dictionaryApi';
-import * as Sentry from '@sentry/react-native';
+// import * as Sentry from '@sentry/react-native';
+import { Sentry } from '@/lib/sentry';
 
 const mockBatchCreate = batchCreateDictionary as jest.Mock;
 const mockUpdate = updateDictionaryEntry as jest.Mock;

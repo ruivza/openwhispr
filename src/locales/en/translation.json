@@ -4124,7 +4124,13 @@
       "oauthTitle": "Sign in with OAuth",
       "oauthDescription": "In a client that supports OAuth, add the server URL, then sign in to OpenWhispr and approve access. No API key needed.",
       "apiKeyTitle": "Use an API key",
-      "apiKeyDescription": "For clients that accept request headers, create a personal API key with the permissions you need and use the header below."
+      "apiKeyDescription": "For clients that accept request headers, create a personal API key with the permissions you need and use the header below.",
+      "localDescription": "Connect an MCP client to the notes and transcripts on this computer.",
+      "localRequirements": "Local stdio only. Keep OpenWhispr running while connected. AppImage is not supported yet; use an installed build.",
+      "localConfigTitle": "MCP client configuration",
+      "localConfigDescription": "Merge this JSON into your client's MCP settings, then restart the client.",
+      "copyConfig": "Copy configuration",
+      "configLoadFailed": "Could not load the local MCP configuration."
     },
     "cli": {
       "description": "Give your assistant access to your notes from the terminal.",

@@ -1,4 +1,82 @@
 import { fireEvent, render, waitFor } from '@testing-library/react-native';
+
+const mockGoNext = jest.fn();
+const mockReadTracking = jest.fn();
+const mockRequestTracking = jest.fn();
+const mockMarkAttempted = jest.fn();
+
+jest.mock('@/components/onboarding/OnboardingShell', () => {
+  const { Pressable, Text, View } = require('react-native');
+  return {
+    OnboardingShell: ({
+      subtitle,
+      ctaLabel,
+      onCta,
+      children,
+    }: {
+      subtitle?: string;
+      ctaLabel: string;
+      onCta: () => void;
+      children?: React.ReactNode;
+    }) => (
+      <View>
+        {subtitle ? <Text>{subtitle}</Text> : null}
+        {children}
+        <Pressable accessibilityRole="button" onPress={onCta}>
+          <Text>{ctaLabel}</Text>
+        </Pressable>
+      </View>
+    ),
+  };
+});
+jest.mock('@/store/useOnboardingStore', () => ({
+  getStepProgress: () => undefined,
+  useOnboardingStore: (selector: (state: unknown) => unknown) =>
+    selector({
+      goNext: mockGoNext,
+      goBack: jest.fn(),
+      markTrackingAuthorizationRequestAttempted: mockMarkAttempted,
+      trackingAuthorizationRequestAttempted: false,
+    }),
+}));
+jest.mock('@/lib/trackingTransparency', () => ({
+  getTrackingAuthorizationStatus: mockReadTracking,
+  requestTrackingAuthorization: mockRequestTracking,
+}));
+jest.mock('@/lib/sentry', () => ({ Sentry: { captureException: jest.fn() } }));
+
+import { TrackingPermissionStep } from '../TrackingPermissionStep';
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockGoNext.mockResolvedValue(undefined);
+});
+
+it('skips the retained tracking step without permission checks, prompts, or marketing UI', async () => {
+  const view = render(<TrackingPermissionStep />);
+  await waitFor(() => expect(mockGoNext).toHaveBeenCalledWith('tracking-permission'));
+  expect(mockGoNext).toHaveBeenCalledTimes(1);
+  expect(mockReadTracking).not.toHaveBeenCalled();
+  expect(mockRequestTracking).not.toHaveBeenCalled();
+  expect(mockMarkAttempted).not.toHaveBeenCalled();
+  expect(view.queryByText('Help OpenWhispr grow')).toBeNull();
+  expect(view.queryByText('Continue')).toBeNull();
+});
+
+it('preserves retry when advancing the saved onboarding step fails', async () => {
+  mockGoNext.mockRejectedValueOnce(
+    new Error("Calling the 'setValueWithKeyAsync' function has failed"),
+  );
+  const view = render(<TrackingPermissionStep />);
+  expect(await view.findByText('Could not save progress.')).toBeTruthy();
+  fireEvent.press(view.getByText('Retry'));
+  await waitFor(() => expect(mockGoNext).toHaveBeenCalledTimes(2));
+  expect(mockRequestTracking).not.toHaveBeenCalled();
+});
+
+// Original telemetry expectations retained while this build disables collection.
+/*
+import { fireEvent, render, waitFor } from '@testing-library/react-native';
 import type { TrackingAuthorizationStatus } from '@/lib/trackingTransparency';
 
 const mockGoNext = jest.fn();
@@ -230,3 +308,4 @@ it('offers continuation retry when auto-skipping ATT fails to save progress', as
   await waitFor(() => expect(mockGoNext).toHaveBeenCalledTimes(2));
   expect(mockRequestTrackingAuthorization).not.toHaveBeenCalled();
 });
+*/

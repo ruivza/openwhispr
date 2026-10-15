@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
+import forkConfig from "../../config/fork.json";
 import { Cloud, Key, Cpu, Network } from "../icons";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { usePolicyModeOptions, usePolicySnapshot } from "../../hooks/usePolicy";
@@ -79,41 +80,44 @@ export function MeetingTranscriptionPanel() {
     effectiveMode: effectiveTranscriptionMode,
     isModeAllowed,
   } = usePolicyModeOptions<InferenceModeOption>(
-    [
-      {
-        id: "openwhispr",
-        label: t("settingsPage.transcription.modes.openwhispr"),
-        description: t("settingsPage.transcription.modes.openwhisprDesc"),
-        icon: <Cloud className="w-4 h-4" />,
-        disabled: !isSignedIn,
-        signInRequired: !isSignedIn,
-      },
-      {
-        id: "providers",
-        label: t("settingsPage.transcription.modes.providers"),
-        description: t("settingsPage.transcription.modes.providersDesc"),
-        icon: <Key className="w-4 h-4" />,
-      },
-      {
-        id: "local",
-        label: t("settingsPage.transcription.modes.local"),
-        description: t("settingsPage.transcription.modes.localDesc"),
-        icon: <Cpu className="w-4 h-4" />,
-      },
-      {
-        id: "self-hosted",
-        label: t("settingsPage.transcription.modes.selfHosted"),
-        description: t("settingsPage.transcription.modes.selfHostedDesc"),
-        icon: <Network className="w-4 h-4" />,
-        disabled: true,
-        badge: t("common.comingSoon"),
-      },
-    ],
+    (
+      [
+        {
+          id: "openwhispr",
+          label: t("settingsPage.transcription.modes.openwhispr"),
+          description: t("settingsPage.transcription.modes.openwhisprDesc"),
+          icon: <Cloud className="w-4 h-4" />,
+          disabled: !isSignedIn,
+          signInRequired: !isSignedIn,
+        },
+        {
+          id: "providers",
+          label: t("settingsPage.transcription.modes.providers"),
+          description: t("settingsPage.transcription.modes.providersDesc"),
+          icon: <Key className="w-4 h-4" />,
+        },
+        {
+          id: "local",
+          label: t("settingsPage.transcription.modes.local"),
+          description: t("settingsPage.transcription.modes.localDesc"),
+          icon: <Cpu className="w-4 h-4" />,
+        },
+        {
+          id: "self-hosted",
+          label: t("settingsPage.transcription.modes.selfHosted"),
+          description: t("settingsPage.transcription.modes.selfHostedDesc"),
+          icon: <Network className="w-4 h-4" />,
+          disabled: true,
+          badge: t("common.comingSoon"),
+        },
+      ] as InferenceModeOption[]
+    ).filter((mode) => forkConfig.hostedServicesEnabled || mode.id !== "openwhispr"),
     "transcription",
     meetingTranscriptionMode,
     { byokProviders: MEETING_BYOK_PROVIDER_IDS }
   );
   const handleTranscriptionModeSelect = (mode: InferenceMode) => {
+    if (mode === "openwhispr" && !forkConfig.hostedServicesEnabled) return;
     if (!isModeAllowed(mode)) return;
     if (mode === "self-hosted") return;
     if (mode === "openwhispr" && !isSignedIn) {
@@ -192,14 +196,16 @@ export function MeetingTranscriptionPanel() {
         onSelect={handleTranscriptionModeSelect}
       />
 
-      {effectiveTranscriptionMode === "openwhispr" && !isSignedIn && (
-        <p className="text-sm text-muted-foreground">
-          {t("settingsPage.transcription.meetingCloudSignedOut")}{" "}
-          <Button variant="link" className="h-auto p-0" onClick={requestSignIn}>
-            {t("common.signIn")}
-          </Button>
-        </p>
-      )}
+      {forkConfig.officialAccountEnabled &&
+        effectiveTranscriptionMode === "openwhispr" &&
+        !isSignedIn && (
+          <p className="text-sm text-muted-foreground">
+            {t("settingsPage.transcription.meetingCloudSignedOut")}{" "}
+            <Button variant="link" className="h-auto p-0" onClick={requestSignIn}>
+              {t("common.signIn")}
+            </Button>
+          </p>
+        )}
       {effectiveTranscriptionMode === "providers" && renderTranscriptionPicker("cloud")}
       {effectiveTranscriptionMode === "local" && renderTranscriptionPicker("local")}
       <MeetingSpeakerDetectionRow />

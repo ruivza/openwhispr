@@ -68,4 +68,5 @@ it('names the voice assistant in Privacy & Data', () => {
   render(<PrivacyDataScreen />);
   expect(screen.getByText('Voice Assistant Context')).toBeTruthy();
   expect(screen.queryByText(/Dictation Agent/)).toBeNull();
+  expect(screen.queryByText('Usage Analytics')).toBeNull();
 });

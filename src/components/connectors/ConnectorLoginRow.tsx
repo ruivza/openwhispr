@@ -39,7 +39,8 @@ const ROW_ERRORS = new Set([
 
 export interface ConnectorLoginRowProps {
   row: ConnectorRowSpec;
-  isPaid: boolean;
+  // isPaid: boolean;
+  available: boolean;
   blockedByOrg: boolean;
 }
 
@@ -50,7 +51,8 @@ export interface ConnectorLoginRowProps {
  */
 export function ConnectorLoginRow({
   row,
-  isPaid,
+  // isPaid,
+  available,
   blockedByOrg,
 }: ConnectorLoginRowProps): ReactElement | null {
   const {
@@ -97,7 +99,8 @@ export function ConnectorLoginRow({
 
   const connected = Boolean(status?.connected);
   const needsReconnect = connected && Boolean(status?.needsReconnect);
-  const canConnect = isPaid && !blockedByOrg;
+  // const canConnect = isPaid && !blockedByOrg;
+  const canConnect = available && !blockedByOrg;
 
   // Leaving Settings mid-connect stops it, for rows that connect in place (GitHub).
   useEffect(() => () => cancelOnLeave.current?.(), []);
@@ -206,7 +209,8 @@ export function ConnectorLoginRow({
   else if (connected && status) summary = copy("connectedAs", accountSummary(status));
   // A free plan sees the connector dimmed, without Connect; the section's one upsell sits above.
   // Only what describes the connector dims: notes about a login just removed stay readable.
-  const locked = !isPaid && !connected;
+  // const locked = !isPaid && !connected;
+  const locked = !available && !connected;
   const dimmed = locked ? "opacity-60" : "";
 
   return (

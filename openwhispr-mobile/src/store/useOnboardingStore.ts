@@ -8,6 +8,7 @@ import {
 import { logTutorialCompletion } from '@/lib/appsflyer';
 import { useConfigStore } from './useConfigStore';
 import type { ProcessingMode } from '@/types';
+import { HOSTED_SERVICES_ENABLED } from '@/lib/fork';
 
 export type OnboardingStepId =
   | 'get-started'
@@ -37,12 +38,12 @@ export const STEP_ORDER: readonly OnboardingStepId[] = [
   'voice-agent',
   'tone',
   'privacy-mode',
-  'paywall',
+  // 'paywall',
   'language',
   'private-download',
   'notifications',
-  'create-account',
-  'tracking-permission',
+  // 'create-account',
+  // 'tracking-permission',
   'graduation',
 ];
 
@@ -66,6 +67,14 @@ export function getOnboardingRoute(mode: ProcessingMode | null): OnboardingStepI
   return STEP_ORDER.filter((step) =>
     step === 'private-download' ? mode === 'private' : step !== 'paywall',
   );
+}
+
+// Saved progress from official builds keeps its permissions and download choice,
+// while retired account/purchase/ATT screens resume on a usable local step.
+function localStep(step: string): string {
+  if (step === 'paywall') return 'language';
+  if (step === 'create-account' || step === 'tracking-permission') return 'graduation';
+  return step;
 }
 
 // The optional download shares the language step's number so choosing Local doesn't grow the total.
@@ -202,7 +211,8 @@ export const useOnboardingStore = create<OnboardingStore>((set, get) => {
       }
       const progress = await OnboardingService.getProgress();
       // The security screen was folded into welcome; resume there rather than restarting setup.
-      const savedStep = progress.step === 'security-first' ? 'welcome' : progress.step;
+      // const savedStep = progress.step === 'security-first' ? 'welcome' : progress.step;
+      const savedStep = localStep(progress.step === 'security-first' ? 'welcome' : progress.step);
       let step = STEP_ORDER.includes(savedStep as OnboardingStepId)
         ? (savedStep as OnboardingStepId)
         : FIRST_ONBOARDING_STEP;
@@ -213,7 +223,8 @@ export const useOnboardingStore = create<OnboardingStore>((set, get) => {
         hydrated: true,
         finished: false,
         currentStep: step,
-        selectedMode: progress.selectedMode ?? null,
+        // selectedMode: progress.selectedMode ?? null,
+        selectedMode: progress.selectedMode === 'cloud' ? 'private' : progress.selectedMode ?? null,
         paywallHandled: progress.paywallHandled === true,
         paywallNextStep: isPaywallNextStep(progress.paywallNextStep)
           ? progress.paywallNextStep
@@ -224,7 +235,8 @@ export const useOnboardingStore = create<OnboardingStore>((set, get) => {
         trackingAuthorizationRequestAttempted,
         permissionsGranted: progress.permissionsGranted,
       };
-      if (legacy && LEGACY_POST_CHOICE_STEPS.includes(step)) {
+      // The old branch reintroduced a paywall for legacy Cloud choices.
+      if (HOSTED_SERVICES_ENABLED && legacy && LEGACY_POST_CHOICE_STEPS.includes(step)) {
         if (!useConfigStore.getState().config) await useConfigStore.getState().loadConfig();
         const mode =
           step === 'private-download'
@@ -236,7 +248,8 @@ export const useOnboardingStore = create<OnboardingStore>((set, get) => {
       set(resumed);
     },
 
-    goToStep: async (step) => transition(get().currentStep, { currentStep: step }),
+    // goToStep: async (step) => transition(get().currentStep, { currentStep: step }),
+    goToStep: async (step) => transition(get().currentStep, { currentStep: localStep(step) as OnboardingStepId }),
 
     goNext: async (from) => {
       const state = get();
@@ -266,11 +279,13 @@ export const useOnboardingStore = create<OnboardingStore>((set, get) => {
     },
 
     chooseMode: async (mode, from) => {
+      if (mode === 'cloud') mode = 'private';
       const next = from === 'private-download' ? 'notifications' : 'language';
       await transition(from, {
         selectedMode: mode,
         paywallNextStep: next,
-        currentStep: mode === 'cloud' && !get().paywallHandled ? 'paywall' : next,
+        // currentStep: mode === 'cloud' && !get().paywallHandled ? 'paywall' : next,
+        currentStep: next,
       });
     },
 

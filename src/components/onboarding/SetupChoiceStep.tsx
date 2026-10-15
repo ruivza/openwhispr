@@ -14,6 +14,7 @@ import {
   Zap,
 } from "../icons";
 import { useTranslation } from "react-i18next";
+import forkConfig from "../../config/fork.json";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "../ui/dialog";
 import { usePolicySnapshot } from "../../hooks/usePolicy";
 import {
@@ -141,12 +142,17 @@ export default function SetupChoiceStep({
   );
   const minimumLocalSpaceGb = Math.max(2, Math.ceil((localReferenceModel?.sizeMb ?? 0) / 1000));
 
-  const availability = getOnboardingSetupAvailability({
+  const policyAvailability = getOnboardingSetupAvailability({
     policy,
     agentAllowed,
     transcriptionProviders: getTranscriptionProviders(),
     llmProviders: modelRegistry.getCloudProviders(),
   });
+  // Retain the official card implementation; only local/BYOK setup is offered.
+  const availability = {
+    ...policyAvailability,
+    cloud: forkConfig.hostedServicesEnabled && policyAvailability.cloud,
+  };
   const {
     cloud: cloudAllowed,
     local: localAllowed,
@@ -156,6 +162,7 @@ export default function SetupChoiceStep({
   const moreOptionsAllowed = byokAllowed || selfHostedAllowed;
 
   const chooseCloud = () => {
+    if (!forkConfig.hostedServicesEnabled) return;
     if (isSignedIn) onSelect("cloud");
     else onRequestAuthentication();
   };

@@ -1,3 +1,27 @@
+const mockNativeModuleLoaded = jest.fn();
+const mockGetPermissions = jest.fn(() => Promise.resolve({ status: 'granted' }));
+const mockRequestPermissions = jest.fn(() => Promise.resolve({ status: 'granted' }));
+
+jest.mock('expo-tracking-transparency', () => {
+  mockNativeModuleLoaded();
+  return {
+    isAvailable: () => true,
+    getTrackingPermissionsAsync: mockGetPermissions,
+    requestTrackingPermissionsAsync: mockRequestPermissions,
+  };
+});
+
+it('never loads the native ATT module or reads/requests authorization', async () => {
+  const tracking = require('../trackingTransparency') as typeof import('../trackingTransparency');
+  await expect(tracking.getTrackingAuthorizationStatus()).resolves.toBe('notSupported');
+  await expect(tracking.requestTrackingAuthorization()).resolves.toBe('notSupported');
+  expect(mockNativeModuleLoaded).not.toHaveBeenCalled();
+  expect(mockGetPermissions).not.toHaveBeenCalled();
+  expect(mockRequestPermissions).not.toHaveBeenCalled();
+});
+
+// Original telemetry expectations retained while this build disables collection.
+/*
 import { Platform } from 'react-native';
 import {
   getTrackingAuthorizationStatus,
@@ -67,3 +91,4 @@ describe('tracking transparency', () => {
     expect(mockRequestTrackingPermissionsAsync).toHaveBeenCalledTimes(1);
   });
 });
+*/

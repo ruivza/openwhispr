@@ -61,10 +61,15 @@ export async function switchWorkflowMode(
   scope: MobileInferenceScope,
   mode: 'openwhispr' | 'local',
 ): Promise<ModeSwitchResult> {
-  if (mode === 'openwhispr' && accountRequiredForCloud(useAuthStore.getState().user)) {
-    showAccountRequiredAlert(isSpeechScope(scope) ? 'cloud transcription' : 'cloud AI');
+  if (mode === 'openwhispr') {
+    Alert.alert('Choose an AI model', 'Use On-Device or Bring Your Own Key in AI Models.');
     return 'refused';
   }
+  // Original official account check retained; no longer reachable in this build.
+  // if (mode === 'openwhispr' && accountRequiredForCloud(useAuthStore.getState().user)) {
+  //   showAccountRequiredAlert(isSpeechScope(scope) ? 'cloud transcription' : 'cloud AI');
+  //   return 'refused';
+  // }
   if (mode === 'local') {
     const blocked = isSpeechScope(scope)
       ? await transcriptionModelReady()

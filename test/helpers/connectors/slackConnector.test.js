@@ -16,6 +16,7 @@ const {
 const BOUND = { binding: BINDING };
 const NOT_CONNECTED = {
   connected: false,
+  configured: true,
   accountLabel: null,
   workspaceLabel: null,
   needsReconnect: false,
@@ -36,6 +37,7 @@ async function setupSlack(script, { credential = CONNECTED } = {}) {
     api,
     credentials,
     getClientId: () => "123.456",
+    redirectUri: "https://relay.example.test/slack/callback",
     OAuthFlowError: Error,
     runOAuthLoopbackFlow: async () => {
       throw new Error("not used in these tests");

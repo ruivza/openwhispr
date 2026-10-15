@@ -60,8 +60,11 @@ export function useInsightsSyncOptIn() {
   // narrower question that is left once sync is already on.
   const [promptKind, setPromptKind] = useState<"enable" | "claim" | null>(null);
   const promptAccountIdRef = useRef(userId);
-  const syncAllowedByPolicy = usePolicyStore(isCloudBackupAllowed);
-  const canToggleSync = canChangeCloudBackupPreference(syncAllowedByPolicy, insightsSyncEnabled);
+  // Cloud analytics cannot be re-enabled by a saved preference or an org policy.
+  const syncAllowedByPolicy = false;
+  const canToggleSync = false;
+  // const syncAllowedByPolicy = usePolicyStore(isCloudBackupAllowed);
+  // const canToggleSync = canChangeCloudBackupPreference(syncAllowedByPolicy, insightsSyncEnabled);
 
   const reportActivationFailure = useCallback(
     (error: unknown) => {

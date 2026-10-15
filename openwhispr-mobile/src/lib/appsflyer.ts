@@ -1,3 +1,59 @@
+// Telemetry disabled in this build. Original implementation retained below.
+import type { TrackingAuthorizationStatus } from '@/lib/trackingTransparency';
+import type { SuperwallPlacement } from '@/lib/superwall';
+import type { TranscriptionProvider } from '@/types';
+
+export type TranscriptionSource = 'keyboard' | 'recording' | 'file' | 'meeting';
+
+type TutorialCompletionInput = {
+  keyboardInstalled: boolean;
+  microphonePermissionGranted: boolean;
+};
+
+type TranscriptionCompletionInput = {
+  source: TranscriptionSource;
+  provider: TranscriptionProvider;
+};
+
+// These compatibility functions never load the SDK, inspect consent, or queue events.
+export function initAppsFlyer(): void {
+  return;
+}
+
+export function setAppsFlyerTrackingAuthorizationStatus(
+  _status: TrackingAuthorizationStatus,
+): void {
+  return;
+}
+
+export async function refreshAppsFlyerTrackingAuthorization(): Promise<void> {
+  return;
+}
+
+export function logAppsFlyerEvent(
+  _eventName: string,
+  _eventValues: Record<string, unknown> = {},
+): void {
+  return;
+}
+
+export function logTutorialCompletion(_input: TutorialCompletionInput): void {
+  return;
+}
+
+export function logTranscriptionCompleted(_input: TranscriptionCompletionInput): void {
+  return;
+}
+
+export function logPaywallViewed(_placement: SuperwallPlacement): void {
+  return;
+}
+
+export function logSubscription(_productId: string, _placement: SuperwallPlacement): void {
+  return;
+}
+
+/*
 import { useConfigStore } from '@/store/useConfigStore';
 import {
   getTrackingAuthorizationStatus,
@@ -291,3 +347,4 @@ export function logSubscription(productId: string, placement: SuperwallPlacement
     placement,
   });
 }
+*/

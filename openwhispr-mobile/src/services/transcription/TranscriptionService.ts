@@ -20,6 +20,7 @@ import { CLEANUP_TIMEOUT_MS } from '../../lib/cleanupTranscript';
 import { withRetry } from '../../lib/retry';
 import { wordLimitErrorFromBody } from './wordLimit';
 import { transcriptionPolicyErrorFromResponse } from './policyErrors';
+import { requireHostedServices } from '@/lib/fork';
 
 const TRANSCRIBE_ENDPOINT = '/api/transcribe';
 const TRANSCRIBE_AND_CLEAN_ENDPOINT =
@@ -456,6 +457,7 @@ export class TranscriptionService {
       fusedCleanup?: boolean;
     } = {},
   ): Promise<TranscriptionResponse> {
+    requireHostedServices();
     const sessionCookie = useAuthStore.getState().sessionCookie;
     if (!sessionCookie) {
       throw new Error('Not authenticated. Please sign in to use cloud transcription.');
@@ -809,6 +811,7 @@ export class TranscriptionService {
     parameters: Record<string, string>,
     sessionCookie: string,
   ): Promise<{ status: number; body: string }> {
+    requireHostedServices();
     const url = `${API_ENDPOINTS.OPENWHISPR_API}${TRANSCRIBE_ENDPOINT}`;
     // Keyboard chunks take the in-process transport for the same reason small
     // inline uploads do: the system schedules background-session transfers
@@ -878,6 +881,7 @@ export class TranscriptionService {
   static async transcribeWithCloudCleanup(
     request: TranscriptionRequest,
   ): Promise<TranscriptionResponse> {
+    requireHostedServices();
     if (fusedCleanupEndpointUnavailable) {
       throw new FusedCleanupUnavailableError('Fused cleanup endpoint already marked unavailable');
     }

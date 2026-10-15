@@ -9,11 +9,16 @@ import {
 } from '@/lib/mobileProviders';
 import type { TranscriptionProvider, TranscriptionRequest, TextInferenceSnapshot } from '@/types';
 import { isLocalModelKey, type LocalModelKey } from '@/lib/localModelCatalog';
+import { localSelection } from './fork';
 
 export type ProviderRoute = Extract<InferenceRoute, { mode: 'providers' }>;
 
 export function getInferenceSelection(scope: InferenceScope): InferenceSelection | undefined {
-  return useConfigStore.getState().config?.inference?.[scope];
+  // return useConfigStore.getState().config?.inference?.[scope];
+  const selection = useConfigStore.getState().config?.inference?.[scope];
+  if (!selection && useProcessingModeStore.getState().activeMode === 'providers' &&
+      (scope === 'dictation' || scope === 'cleanup' || scope === 'agent')) return undefined;
+  return localSelection(selection);
 }
 
 // The on-device model the user picked for a workflow; undefined means Automatic.
@@ -38,7 +43,8 @@ export function getTranscriptionProvider(scope: InferenceScope): TranscriptionPr
     useProcessingModeStore.getState().activeMode === 'providers'
   )
     return 'byok';
-  return 'cloud';
+  // return 'cloud';
+  return 'local';
 }
 
 // Route refusals are configuration problems; retrying the request cannot fix them.

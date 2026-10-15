@@ -1,6 +1,7 @@
 import { fetch } from 'expo/fetch';
 import { ApiError, getClientVersionHeader } from '@/lib/apiClient';
 import { parseApiErrorBody } from '@/lib/apiErrorBody';
+import { requireHostedServices } from './fork';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'https://api.openwhispr.com';
 
@@ -30,6 +31,7 @@ export interface ReferralInvite {
 }
 
 function authHeaders(sessionCookie: string | null): Record<string, string> {
+  requireHostedServices();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...getClientVersionHeader(),
