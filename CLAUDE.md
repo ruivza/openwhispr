@@ -70,7 +70,7 @@ OpenWhispr is an Electron-based desktop dictation application that uses whisper.
 - **clipboard.js**: Cross-platform clipboard operations
   - macOS: AppleScript-based paste with accessibility permission check
   - Windows: PowerShell SendKeys with nircmd.exe fallback
-  - Linux: compositor-aware Wayland paste (Hyprland sendshortcut, wlroots wtype, GNOME/KDE portal keysyms) with native uinput/XTest and system-tool fallbacks
+  - Linux: compositor-aware Wayland paste (Hyprland sendshortcut, wlroots wtype, GNOME/KDE portal keysyms) with native uinput/XTest and system-tool fallbacks. KDE's portal paste sends Shift+Insert to every window but Warp, which binds paste to Ctrl+Shift+V only: KWin resolves keysyms in the active layout only, so a Ctrl+V on a non-Latin layout arrives as Ctrl alone (#2055). The app runs on XWayland, which the compositor won't let read a native Wayland app's clipboard while a Wayland window is focused, so `_saveClipboard` falls back to `wl-paste --type text` when Electron reads nothing; otherwise the restore would wipe the user's clipboard
   - Linux COSMIC: paste reads the focused app from cosmic-comp's `zcosmic_toplevel_info_v1` (`cosmicToplevel.js`, a minimal Wayland wire client, bound at version 1, which still sends app_id and state), never from xdotool, whose XWayland answer goes stale while a native Wayland window has focus. A known terminal is pasted through wtype (Ctrl+Shift+V; Shift+Insert for Konsole); everything else keeps uinput Shift+Insert, since COSMIC gives no PID to spot Electron apps hosting TUIs. Short terminal names (`st`) match whole words only, or every `com.system76.*` app id would read as a terminal
   - Linux: before any paste or selection-copy chord, `linux-fast-paste --capabilities --await-modifier-release <ms>` waits for physically held modifiers to be released (XKB state on X11, `EVIOCGKEY` on Wayland; `unknown` without `/dev/input` access pastes as before). A chord injected into held keys arrives as a different shortcut, and a virtual device cannot release another device's key (#2113). Still held after 1.5 s → not pasted, `reason: "modifiers-held"`, and the renderer shows the dictation-error pill with the transcript on the clipboard; a selection edit blocked the same way reports `code: "modifiers_held"` and gets the same pill (the assistant caret paste reports the same code, for logs only). `ydotoold`'s virtual keyboard is ignored, since an interrupted chord can leave its modifier down, and an unreadable key state is logged once per session. The wait runs before `pasteLinux` detects the target window, and a selection copy that had to wait looks the target up again, since focus can move while a key is held: a fresh capture then runs the command on its own (`focus_moved`), and a revalidated session declines as `target_changed`. Retry on a modifiers-held pill pastes the kept transcript again rather than recording again (the macOS/Windows push force-stop pill keeps its record-again Retry, since neither platform waits for held keys), ignores clicks while its paste is pending, and never dismisses a newer pill. `useAudioRecording` keeps the pill in processing until the paste attempt settles (the audio manager settles before the paste starts), but never reports that to main, which drops dictation hotkeys while processing; a paste held back after the next dictation started leaves the transcript on the clipboard without a pill. The helper measures its wait on `CLOCK_MONOTONIC`, since the JS watchdog kills it at timeout + 1 s
 - **database.js**: SQLite operations for transcription history
@@ -460,7 +460,9 @@ Non-secret env vars persisted to `.env` (via `saveAllKeysToEnvFile()`):
 
 ### 8. Model Registry Architecture
 
-All desktop AI model definitions are centralized in `src/models/modelRegistryData.json` as the single source of truth. The mobile app keeps its own hand-updated copies (see below):
+Desktop model definitions are authored in the public [model-registry repository](https://github.com/OpenWhispr/model-registry). Merging a compatible catalog edit publishes a signed update that the desktop checks after startup and every 15 minutes. `src/models/modelRegistryData.json` is a generated offline snapshot, not an editing source. API routing, admin policy catalogs, and mobile catalogs remain separate contracts (see below).
+
+To update the offline snapshot, run `npm run model-registry:sync -- --revision <exact published-branch commit>`, then commit the generated files together. `npm run model-registry:verify` checks their signature, source digests and parity without network access; normal builds never fetch the latest registry. New providers or native engines still require code and a release. Operational details and regression boundaries are in `docs/superpowers/specs/2026-10-14-dynamic-model-registry.md`.
 
 ```json
 {
@@ -471,7 +473,11 @@ All desktop AI model definitions are centralized in `src/models/modelRegistryDat
 
 **Key files:**
 
-- `src/models/modelRegistryData.json` - Single source of truth for all desktop models
+- `src/models/modelRegistryData.json`, `registryBundle.json`, `registryMetadata.json` - Generated offline catalog, signed envelope and exact source/publication provenance
+- `src/models/registryData.js` - Live process-local store; use this instead of importing the snapshot in runtime readers
+- `src/helpers/registryLoader.js` - Main-only signature/schema/compatibility validation, bounded cache and background refresh; `OPENWHISPR_MODEL_REGISTRY_MODE=bundled` disables cache and network activation
+- `src/models/registryBootstrap.js`, `registrySync.js` - Verified preload snapshot before settings migrations, then IPC updates; React catalog consumers subscribe through `useRegistryVersion`
+- `src/models/cloudModelCatalog.ts` - Shared Tinfoil live overlay for pickers and settings; never mutates canonical signed data
 - `openwhispr-mobile/src/config/providerCatalog.json` - Mobile's trimmed copy of the OpenAI and Groq entries. It, mobile's endpoint rules and its agent prompt (`openwhispr-mobile/src/config/prompts/defaultPrompts.json`) are copies, not shared code, so update them by hand when desktop's change (the catalog is covered in `openwhispr-mobile/CONTRIBUTING.md`)
 - `src/models/ModelRegistry.ts` - TypeScript wrapper with helper methods; also derives
   `REASONING_PROVIDERS` (`buildReasoningProviders()`), consumed by the model pickers
@@ -891,7 +897,7 @@ UI icons come from `src/components/icons/` (vendored Nucleo core outline compone
      - Hyprland Wayland: wtype → sendshortcut → uinput/ydotool
      - Sway/wlroots Wayland: wtype → uinput/ydotool
      - COSMIC Wayland: wtype for a detected terminal → uinput/ydotool
-     - GNOME/KDE Wayland: portal keysyms → uinput/ydotool
+     - GNOME/KDE Wayland: portal keysyms (Shift+Insert on KDE, except Warp) → uinput/ydotool
      - Physical Wayland fallbacks use Shift+Insert to avoid layout-sensitive KEY_V
    - Windows: PowerShell SendKeys (built-in) or nircmd.exe (bundled)
 
@@ -979,7 +985,7 @@ UI icons come from `src/components/icons/` (vendored Nucleo core outline compone
   - **Hyprland Wayland**: `wtype`, then `hyprctl` sendshortcut (avoids the sendshortcut stuck-modifier bug when wtype is installed)
   - **Sway/wlroots Wayland**: `wtype` (requires the virtual keyboard protocol)
   - **COSMIC Wayland**: `wtype` for terminals (Warp has no Shift+Insert paste); other windows paste with uinput Shift+Insert. Settings and onboarding ask for `wtype` there once something else pastes (`needsWtype` in `src/utils/linuxPasteTools.ts`), but `checkPasteTools` never reports it as the method
-  - **GNOME/KDE Wayland**: RemoteDesktop portal keysyms, then uinput/ydotool
+  - **GNOME/KDE Wayland**: RemoteDesktop portal keysyms (Shift+Insert on KDE, except Warp), then uinput/ydotool
   - **Wayland physical fallback**: Shift+Insert avoids layout-sensitive KEY_V; `ydotool` requires the `ydotoold` daemon
   - Terminal detection: Auto-detects terminal emulators and uses Ctrl+Shift+V
   - Fallback: Text copied to clipboard with manual paste instructions
