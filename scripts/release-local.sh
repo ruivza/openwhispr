@@ -11,7 +11,7 @@ usage() {
     cat <<'HELP'
 Usage: bash scripts/release-local.sh --run RUN_ID [--repo OWNER/REPO] [--arch arm64|all] [--publish]
 
-Download a successful tagged build and sign/notarize macOS packages locally.
+Download a successful tagged or source-equivalent main build and sign/notarize locally.
 Default: sign the Apple Silicon arm64 build and keep the DMG under build/.
 --publish adds signed Mac DMGs, update ZIPs, manifests and checksums to the version Release.
 GitHub publishes Windows packages separately. Existing assets are not replaced.
@@ -99,7 +99,51 @@ mkdir "$WORK_DIR/output"
 echo "Checking GitHub build $RUN_ID for $TAG..."
 gh run view "$RUN_ID" --repo "$REPOSITORY" \
     --json headSha,headBranch,status,conclusion,event,workflowName > "$WORK_DIR/run.json"
-python3 "$SCRIPT_DIR/lib/macos-release.py" validate-run "$WORK_DIR/run.json" "$COMMIT" "$TAG"
+# python3 "$SCRIPT_DIR/lib/macos-release.py" validate-run "$WORK_DIR/run.json" "$COMMIT" "$TAG"
+# Read the real API provenance: never relabel a main run as a tagged build.
+gh api "repos/$REPOSITORY/actions/runs/$RUN_ID" > "$WORK_DIR/run-api.json"
+BUILD_COMMIT=$(python3 - "$WORK_DIR/run-api.json" "$COMMIT" "$TAG" "$VERSION" <<'PY_BUILD_PROVENANCE'
+import json, re, subprocess, sys
+
+run_file, release_commit, tag, version = sys.argv[1:]
+run = json.load(open(run_file))
+repository = "ruivza/openwhispr"
+if any(run.get(field, {}).get("full_name") != repository for field in ("repository", "head_repository")):
+    sys.exit("Error: build must originate in ruivza/openwhispr.")
+if (run.get("status"), run.get("conclusion")) != ("completed", "success"):
+    sys.exit("Error: build must have completed successfully.")
+build_commit = run.get("head_sha", "")
+if not re.fullmatch(r"[a-f0-9]{40}", build_commit):
+    sys.exit("Error: invalid build commit.")
+kind = (run.get("name"), run.get("path"))
+if kind == ("Build tagged packages (unsigned)", ".github/workflows/release.yml"):
+    if build_commit != release_commit or run.get("event") not in ("push", "workflow_dispatch"):
+        sys.exit("Error: tagged build does not match the release commit.")
+    if run["event"] == "push" and run.get("head_branch") != tag:
+        sys.exit("Error: tagged build does not match the selected tag.")
+elif kind == ("Build unsigned packages", ".github/workflows/build-and-notarize.yml"):
+    if run.get("event") != "workflow_dispatch" or run.get("head_branch") != "main":
+        sys.exit("Error: only trusted manual main builds may be reused.")
+else:
+    sys.exit("Error: unexpected build workflow.")
+try:
+    subprocess.run(["git", "cat-file", "-e", build_commit + "^{commit}"], check=True, capture_output=True)
+    subprocess.run(["git", "merge-base", "--is-ancestor", build_commit, release_commit], check=True)
+    package = json.loads(subprocess.check_output(["git", "show", build_commit + ":package.json"], text=True))
+    if package.get("version") != version:
+        sys.exit("Error: reused build version does not match the release tag.")
+    paths = subprocess.check_output(["git", "diff", "--no-renames", "--name-only", "-z", build_commit, release_commit]).decode().split("\0")
+except (subprocess.CalledProcessError, ValueError, UnicodeError):
+    sys.exit("Error: cannot verify build ancestry/version; fetch the complete tag history first.")
+documentation = {"README.md", "CONTRIBUTING.md", "openwhispr-mobile/README.md", "openwhispr-mobile/CONTRIBUTING.md"}
+if any(path and path not in documentation and not (path.startswith("docs/") and path.endswith(".md")) for path in paths):
+    sys.exit("Error: build and release differ outside documentation; do not reuse this build.")
+print(build_commit)
+PY_BUILD_PROVENANCE
+)
+if [ "$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["workflowName"])' "$WORK_DIR/run.json")" = "Build tagged packages (unsigned)" ]; then
+    python3 "$SCRIPT_DIR/lib/macos-release.py" validate-run "$WORK_DIR/run.json" "$COMMIT" "$TAG"
+fi
 
 notarize() {
     local file="$1"
@@ -121,9 +165,12 @@ for arch in "${ARCHS[@]}"; do
     gh run download "$RUN_ID" --repo "$REPOSITORY" \
         --name "macos-$arch-unsigned-build" --dir "$WORK_DIR/download-$arch"
     echo "[$arch] Download complete. Validating and extracting app..."
+    # python3 "$SCRIPT_DIR/lib/macos-release.py" extract \
+    #     "$WORK_DIR/download-$arch/OpenWhispr-macos-$arch-unsigned-app.tar.gz" \
+    #     "$WORK_DIR/extracted-$arch" "$VERSION" "$COMMIT" "$arch"
     python3 "$SCRIPT_DIR/lib/macos-release.py" extract \
         "$WORK_DIR/download-$arch/OpenWhispr-macos-$arch-unsigned-app.tar.gz" \
-        "$WORK_DIR/extracted-$arch" "$VERSION" "$COMMIT" "$arch"
+        "$WORK_DIR/extracted-$arch" "$VERSION" "$BUILD_COMMIT" "$arch"
     APP="$WORK_DIR/extracted-$arch/OpenWhispr.app"
     EXPECTED_ARCH="$arch"
     # if [ "$arch" = x64 ]; then EXPECTED_ARCH=x86_64; fi

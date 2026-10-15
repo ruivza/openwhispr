@@ -138,6 +138,21 @@ NOTARY_PROFILE=speechdock-release bash scripts/release-local.sh --run RUN_ID --p
 
 Use the run ID from **this OpenWhispr repository**, not an old SpeechDock run. The script verifies the remote tag, local commit, successful workflow, and artifact metadata. It signs Electron helpers, frameworks, native modules, and the app from the inside out using `resources/mac/entitlements.mac.plist`; then it notarizes and staples the app, creates and signs a DMG, notarizes/staples the DMG, and checks Gatekeeper. Only `arm64` is processed. No app compilation runs locally. The release launcher (`scripts/release-local.sh`) may be updated from a reviewed later commit to fix download or publishing behavior without rebuilding the app. The checkout, signing helper, entitlements, and other build inputs must still match the release tag.
 
+An existing successful manual **Build unsigned packages** run from this fork's `main` may also be reused when its version matches and the release tag differs only in the documented README/CONTRIBUTING paths or Markdown under `docs/`. The launcher verifies the real workflow provenance and Git history, and validates `release.json` against the original build commit, without rewriting it. Runtime, dependency, signing-helper or workflow differences are rejected.
+
+For `v1.10.3-ruivza.2`, reuse build `38694847321` without rebuilding. Fetch the reviewed launcher from `main`, but keep the signing helper and all other files at the tag:
+
+```bash
+git fetch origin main tag v1.10.3-ruivza.2
+git switch --detach v1.10.3-ruivza.2
+git restore --source=origin/main -- scripts/release-local.sh
+NOTARY_PROFILE=speechdock-release bash scripts/release-local.sh --run 38694847321 --publish
+```
+
+Omit `--publish` to keep the signed packages local. The downloaded archive still identifies its original build commit; the launcher requires that commit to be an ancestor of the release tag. A shallow clone may need `git fetch --unshallow origin` before validation can succeed.
+
+To reuse the same build for Windows, run **Publish Windows packages** manually with `run_id` set to `38694847321`. The publisher checks the successful manual main run, the version's existing tag and its documentation-only source difference before publishing the original installer and freshly generated update metadata. This publishes existing artifacts; it does not start another application build.
+
 Without `--publish`, signed DMGs stay in a new directory under `build/local-release.*/output`. The default and `--arch arm64` both process Apple Silicon; legacy `--arch all` is an arm64 alias, and `--arch x64` is rejected. Publishing adds the signed arm64 Mac packages and `SHA256SUMS-macos` to the version Release. GitHub automatically publishes the Windows installer and `SHA256SUMS-windows` after a successful tagged build; the Mac downloads only its arm64 artifact. Either publisher can create the Release first, and neither overwrites existing assets. To publish Windows packages from an older successful tag build, run the **Publish Windows packages** workflow with its run ID. Fork revision releases use the `ruivza` update channel; the publishers generate its manifests from the final installer/ZIP bytes and upload metadata after the payloads. Fork revision tags are marked as GitHub prereleases.
 
 If several Developer ID certificates are installed, set `SIGNING_IDENTITY` to the exact certificate name or SHA-1 shown by `security find-identity -v -p codesigning`. `NOTARY_KEYCHAIN` optionally selects the Keychain containing the notary profile. Certificate private keys and notary credentials remain on the Mac.

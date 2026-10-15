@@ -124,6 +124,115 @@ class RunTests(unittest.TestCase):
                 release.validate_run({**valid, key: value}, COMMIT, "v" + VERSION)
 
 
+class LauncherProvenanceTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.repo = Path(self.temp.name).resolve()
+        self.git("init", "--quiet")
+        self.git("config", "user.name", "Release fixture")
+        self.git("config", "user.email", "fixture@example.test")
+        hooks = self.repo / "empty-hooks"
+        hooks.mkdir()
+        self.git("config", "core.hooksPath", str(hooks))
+        (self.repo / "package.json").write_text(json.dumps({"version": VERSION}))
+        (self.repo / "source.js").write_text("original application code\n")
+        (self.repo / "openwhispr-mobile").mkdir()
+        self.documentation = self.repo / "openwhispr-mobile/CONTRIBUTING.md"
+        self.documentation.write_text("original documentation\n")
+        self.git("add", ".")
+        self.git("commit", "--quiet", "-m", "original successful main build")
+        self.build_commit = self.git("rev-parse", "HEAD").strip()
+        self.documentation.write_text("updated documentation\n")
+        self.git("commit", "--quiet", "-am", "documentation before release")
+        self.release_commit = self.git("rev-parse", "HEAD").strip()
+        self.metadata = {
+            "repository": {"full_name": "ruivza/openwhispr"},
+            "head_repository": {"full_name": "ruivza/openwhispr"},
+            "status": "completed", "conclusion": "success",
+            "head_sha": self.build_commit, "head_branch": "main",
+            "event": "workflow_dispatch", "name": "Build unsigned packages",
+            "path": ".github/workflows/build-and-notarize.yml",
+        }
+        launcher = (PROJECT / "scripts/release-local.sh").read_text()
+        self.validator = launcher.split("<<'PY_BUILD_PROVENANCE'\n", 1)[1].split("\nPY_BUILD_PROVENANCE", 1)[0]
+
+    def git(self, *args):
+        return subprocess.check_output(["git", *args], cwd=self.repo, text=True, stderr=subprocess.PIPE)
+
+    def validate(self, changes=None, version=VERSION):
+        metadata = {**self.metadata, **(changes or {})}
+        file = self.repo / "run-api.json"
+        file.write_text(json.dumps(metadata))
+        return subprocess.run([sys.executable, "-c", self.validator, str(file), self.release_commit,
+                               "v" + version, version], cwd=self.repo, capture_output=True, text=True)
+
+    def test_reuses_real_build_sha_when_only_mobile_documentation_changed(self):
+        result = self.validate()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), self.build_commit)
+        self.assertNotEqual(result.stdout.strip(), self.release_commit)
+
+    def test_rejects_untrusted_failed_nonmanual_or_other_branch_runs(self):
+        cases = [
+            {"repository": {"full_name": "OpenWhispr/openwhispr"}},
+            {"head_repository": {"full_name": "someone/openwhispr"}},
+            {"status": "in_progress"}, {"conclusion": "failure"},
+            {"event": "pull_request"}, {"event": "push"}, {"head_branch": "develop"},
+            {"name": "Other workflow"}, {"path": ".github/workflows/other.yml"},
+            {"head_sha": "not-a-commit"},
+        ]
+        for changes in cases:
+            with self.subTest(changes=changes):
+                self.assertNotEqual(self.validate(changes).returncode, 0)
+
+    def test_rejects_runtime_source_changes(self):
+        (self.repo / "source.js").write_text("different application code\n")
+        self.git("commit", "--quiet", "-am", "runtime change")
+        self.release_commit = self.git("rev-parse", "HEAD").strip()
+        result = self.validate()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("outside documentation", result.stderr)
+
+    def test_markdown_outside_documentation_paths_is_not_exempt(self):
+        path = self.repo / ".github/workflows/runtime.md"
+        path.parent.mkdir(parents=True)
+        path.write_text("workflow input is not a documentation exemption")
+        self.git("add", ".github")
+        self.git("commit", "--quiet", "-m", "non-documentation markdown")
+        self.release_commit = self.git("rev-parse", "HEAD").strip()
+        self.assertNotEqual(self.validate().returncode, 0)
+
+    def test_source_renamed_into_documentation_cannot_hide_its_original_path(self):
+        (self.repo / "docs").mkdir()
+        self.git("mv", "source.js", "docs/source.md")
+        self.git("commit", "--quiet", "-m", "rename application source as documentation")
+        self.release_commit = self.git("rev-parse", "HEAD").strip()
+        result = self.validate()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("outside documentation", result.stderr)
+
+    def test_rejects_mismatched_build_version(self):
+        result = self.validate(version="9.9.9")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("version does not match", result.stderr)
+
+    def test_preserves_tagged_build_mode(self):
+        result = self.validate({"head_sha": self.release_commit, "head_branch": "v" + VERSION,
+                                "event": "push", "name": "Build tagged packages (unsigned)",
+                                "path": ".github/workflows/release.yml"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), self.release_commit)
+
+    def test_reused_archive_keeps_original_build_provenance(self):
+        metadata = {"version": VERSION, "commit": self.build_commit, "arch": "arm64"}
+        with tarfile.open(fileobj=io.BytesIO(archive_bytes(metadata=metadata)), mode="r:gz") as archive:
+            release.validate_archive(archive, VERSION, self.build_commit, "arm64")
+        with tarfile.open(fileobj=io.BytesIO(archive_bytes(metadata=metadata)), mode="r:gz") as archive:
+            with self.assertRaisesRegex(ValueError, "does not match"):
+                release.validate_archive(archive, VERSION, self.release_commit, "arm64")
+
+
 class SigningTests(unittest.TestCase):
     def bundle(self, path, identifier, executable, framework=False):
         info_dir = path / ("Resources" if framework else "Contents")
