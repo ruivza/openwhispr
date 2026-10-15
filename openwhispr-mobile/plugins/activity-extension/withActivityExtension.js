@@ -372,7 +372,8 @@ function withActivityExtension(config) {
       SKIP_INSTALL: 'YES',
       CODE_SIGN_STYLE: 'Manual',
       GENERATE_INFOPLIST_FILE: 'NO',
-      CURRENT_PROJECT_VERSION: '1',
+      // CURRENT_PROJECT_VERSION: '1',
+      CURRENT_PROJECT_VERSION: cfg.ios?.buildNumber || '1',
       MARKETING_VERSION: appVersion,
       LD_RUNPATH_SEARCH_PATHS:
         '"$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks"',

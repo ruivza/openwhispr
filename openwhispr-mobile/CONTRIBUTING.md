@@ -106,6 +106,8 @@ Maintainers shipping a separate fork must also replace the organization-specific
 
 ## GitHub unsigned iOS builds
 
+The fork displays iOS versions as `X.Y.Z.N`, currently `1.2.3.1`. Apple metadata retains `X.Y.Z` as Version and uses `N` as Build for the main app and both extensions. `config/fork-version.json` tracks the official mobile version and fork revision; daily upstream synchronization increments that revision when mobile files change and resets it to 1 when the official mobile version increases.
+
 The **Build unsigned iOS app** Actions workflow builds a Release arm64 device archive without Apple signing credentials or an EAS account. It is manually triggered and uploads artifacts, without publishing a release. Its first native build still needs to be run and verified on GitHub.
 
 1. Push the reviewed changes to your fork. Open **Actions → Build unsigned iOS app → Run workflow**.

@@ -387,6 +387,9 @@ test('resolved Expo config disables official OTA and telemetry while preserving 
     fs: { existsSync: () => false },
     path,
     './app.base.json': baseConfig,
+    './config/fork-version.json': JSON.parse(
+      fs.readFileSync(path.join(mobileRoot, 'config/fork-version.json'), 'utf8'),
+    ),
     './config/openwhispr-environments': environments,
   });
   const config = loaded.exports();

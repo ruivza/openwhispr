@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const baseConfig = require('./app.base.json');
+const forkVersion = require('./config/fork-version.json');
 const { resolveOpenWhisprEnvironment } = require('./config/openwhispr-environments');
 
 // Yowza is licensed, so the files are git-ignored and fetched by
@@ -127,6 +128,21 @@ function createGoogleCalendarConfig(environment) {
 module.exports = () => {
   const environment = resolveOpenWhisprEnvironment();
   const expo = clone(baseConfig.expo);
+  if (
+    typeof forkVersion.upstreamVersion !== 'string' ||
+    !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(forkVersion.upstreamVersion) ||
+    forkVersion.upstreamVersion !== expo.version
+  ) {
+    throw new Error('Mobile fork upstreamVersion must match app.base.json expo.version.');
+  }
+  if (
+    typeof forkVersion.revision !== 'string' ||
+    !/^[1-9]\d*$/.test(forkVersion.revision) ||
+    !Number.isSafeInteger(Number(forkVersion.revision))
+  ) {
+    throw new Error('Mobile fork revision must be a positive integer string.');
+  }
+  const displayVersion = `${forkVersion.upstreamVersion}.${forkVersion.revision}`;
   const unsignedIosBuild = process.env.OPENWHISPR_UNSIGNED_IOS_BUILD === '1';
   if (unsignedIosBuild) {
     const bundleId = environment.iosBundleIdentifier;
@@ -157,6 +173,7 @@ module.exports = () => {
       // Keep the upstream team in app.base.json; unsigned fork builds use no team.
       ...(unsignedIosBuild ? { appleTeamId: undefined } : {}),
       bundleIdentifier: environment.iosBundleIdentifier,
+      buildNumber: forkVersion.revision,
       entitlements: {
         ...(expo.ios?.entitlements ?? {}),
         'com.apple.security.application-groups': [environment.appGroupId],
@@ -182,6 +199,7 @@ module.exports = () => {
       ...expo.extra,
       openWhispr: {
         ...environment,
+        forkVersion: displayVersion,
         googleCalendar,
       },
       eas: createEasExtensionConfig(expo.extra, environment),

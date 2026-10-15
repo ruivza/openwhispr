@@ -85,6 +85,18 @@ Desktop audio imports using your own API key automatically split files above the
 
 ## GitHub builds and local macOS signing
 
+### Daily upstream synchronization
+
+**Sync upstream main** checks `OpenWhispr/openwhispr:main` daily at 20:17 UTC (Sydney 06:17 in winter / 07:17 in summer), with a manual Actions entry as well. It merges in an isolated checkout, preserves fork commits, and checks the local/BYOK, telemetry, version and supported-platform rules before updating `main`. A concurrent user push is kept; synchronization retries from the new head on its next run. The task installs test dependencies with lifecycle scripts disabled and runs targeted checks, without building application packages.
+
+Desktop versions follow `X.Y.Z-ruivza.N`: new upstream commits increment the fork revision, and an official version increase starts at revision 1. The iOS display version follows its separate `X.Y.Z.N` line; Apple metadata uses the official three-part Version plus the fork revision as Build. iOS revisions change only when mobile files change.
+
+Conflicts, failed checks or rejected pushes leave `main` unchanged and open/update one Issue assigned to `ruivza`. Repeated failures for the same upstream commit reuse the existing notice; a later successful synchronization closes it. GitHub delivers notifications according to your account settings. Synchronization commits include `[skip ci]`; the task never creates tags, publishes Releases or starts app-build workflows.
+
+The built-in repository token handles ordinary updates. If GitHub rejects an upstream workflow-file change, add an optional **Actions secret** named `UPSTREAM_SYNC_TOKEN`, limited to this fork with Contents and Workflows write permissions. Keep that value in GitHub Secrets; it is never part of source code. The Issue explains any permission failure instead of replacing or force-pushing the branch.
+
+### Desktop build artifacts
+
 This fork's desktop workflows build Windows x64 and macOS arm64 without publisher certificates. Pushes to `main`/`develop`, pull requests, and manual runs keep the existing quality checks. Version tags and the tagged-build workflow use the same unsigned build pipeline. After a successful tag-push build, **Publish Windows packages** publishes the Windows installer to the version Release. Signed Mac DMGs are added locally after notarization. Linux and Intel Mac build jobs are disabled; Ubuntu runners remain in use for quality checks.
 
 Download the artifacts from the completed GitHub Actions run (retained for 7 days):
@@ -102,7 +114,7 @@ GitHub needs no Azure signing credentials, Apple certificate, or notarization ke
 
 This follows the same `release-local.sh --run ... --publish` workflow as SpeechDock. Install GitHub CLI (`gh`), Python 3.9+, Xcode command-line tools, and your Developer ID Application certificate with its private key. Log in with `gh auth login`. Use an existing notarytool Keychain profile, or create one with `xcrun notarytool store-credentials openwhispr-release`. A profile such as `speechdock-release` can be reused for the same Apple account/team; its name is not tied to an application.
 
-The fork follows the upstream version and appends its own revision: `1.10.3-ruivza.1`, `1.10.3-ruivza.2`, then `1.10.4-ruivza.1` after merging upstream `1.10.4`. The Windows app executable's file/product versions use the numeric form `1.10.3.1`. Keep the two Windows metadata values in `electron-builder.json` in sync with each revision. An existing `1.10.4` installation needs one manual install to move to `1.10.3-ruivza.1`; automatic downgrades stay disabled.
+The fork follows the upstream version and appends its own revision: `1.10.3-ruivza.1`, `1.10.3-ruivza.2`, then `1.10.4-ruivza.1` after merging upstream `1.10.4`. The Windows app executable's file/product versions use the numeric form `1.10.3.1`. Keep the two Windows metadata values in `electron-builder.json` in sync with each revision. The fresh fork release baseline is `1.10.3-ruivza.1`; old Releases and tags have been cleared separately. Automatic downgrades stay disabled, so a previously installed higher version still needs a manual install.
 
 1. Set `package.json`, the lockfile, and the Windows metadata to the intended release version, commit and push the changes, then push a matching **new** `vX.Y.Z-ruivza.N` tag. Existing tags/assets are never replaced.
 2. Wait for **Build tagged packages (unsigned)** to finish successfully and copy its Actions run ID.

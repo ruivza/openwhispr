@@ -419,6 +419,10 @@ import { confirmDestructive } from '@/lib/alerts';
 
 export default function AccountScreen() {
   const reset = useOnboardingStore((state) => state.reset);
+  const displayVersion =
+    Constants.expoConfig?.extra?.openWhispr?.forkVersion ??
+    Constants.expoConfig?.version ??
+    'unknown';
   return <View className="flex-1 bg-systemBackground">
     <TabScreenHeader title="Settings" left={<GlassBackButton fallbackRoute="/(tabs)/(record)" />} />
     <SettingsScreen>
@@ -434,7 +438,8 @@ export default function AccountScreen() {
         <SettingsRow icon="arrow.counterclockwise" mdIcon="RotateCcw" title="Reset onboarding" onPress={() => confirmDestructive('Reset onboarding?', 'Replay local setup on next launch.', async () => { await reset(); Alert.alert('Done', 'Restart the app to replay onboarding.'); }, { destructiveLabel: 'Reset' })} />
       </SettingsSection>
       <SettingsSection title="About">
-        <SettingsRow icon="info.circle" mdIcon="Info" title="Version" subtitle={Constants.expoConfig?.version ?? 'unknown'} showChevron={false} />
+        {/* <SettingsRow icon="info.circle" mdIcon="Info" title="Version" subtitle={Constants.expoConfig?.version ?? 'unknown'} showChevron={false} /> */}
+        <SettingsRow icon="info.circle" mdIcon="Info" title="Version" subtitle={displayVersion} showChevron={false} />
         <SettingsRow icon="text.badge.checkmark" mdIcon="ScrollText" title="Licenses & Attribution" onPress={() => router.push('/(account)/licenses')} />
       </SettingsSection>
     </SettingsScreen>
