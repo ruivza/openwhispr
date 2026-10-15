@@ -6,7 +6,8 @@
 
 <p align="center">
   <a href="https://github.com/OpenWhispr/openwhispr/blob/main/LICENSE"><img src="https://img.shields.io/github/license/OpenWhispr/openwhispr?style=flat" alt="License" /></a>
-  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey?style=flat" alt="Platform" />
+  <!-- <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey?style=flat" alt="Platform" /> -->
+  <img src="https://img.shields.io/badge/platform-macOS%20arm64%20%7C%20Windows%20x64-lightgrey?style=flat" alt="Platform" />
   <a href="https://github.com/OpenWhispr/openwhispr/releases/latest"><img src="https://img.shields.io/github/v/release/OpenWhispr/openwhispr?style=flat&sort=semver" alt="GitHub release" /></a>
   <a href="https://github.com/OpenWhispr/openwhispr/releases"><img src="https://img.shields.io/github/downloads/OpenWhispr/openwhispr/total?style=flat&color=blue" alt="Downloads" /></a>
   <a href="https://github.com/OpenWhispr/openwhispr/stargazers"><img src="https://img.shields.io/github/stars/OpenWhispr/openwhispr?style=flat" alt="GitHub stars" /></a>
@@ -14,7 +15,8 @@
 
 <p align="center">
   The open-source and free alternative to WisprFlow and Granola.<br/>
-  Privacy-first voice-to-text dictation with AI agents, meeting transcription, and notes. Cross-platform for macOS, Windows, and Linux.
+  <!-- Privacy-first voice-to-text dictation with AI agents, meeting transcription, and notes. Cross-platform for macOS, Windows, and Linux. -->
+  Privacy-first voice-to-text dictation with AI agents, meeting transcription, and notes. This fork supports Windows x64 and macOS on Apple Silicon.
 </p>
 
 <p align="center">
@@ -34,8 +36,10 @@ OpenWhispr turns your voice into text, notes, and actions from your desktop. Pre
 | Platform              | Download                                                                                                                                                                                                                                                                                  |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | macOS (Apple Silicon) | [`.dmg`](https://github.com/OpenWhispr/openwhispr/releases/latest)                                                                                                                                                                                                                        |
-| macOS (Intel) \*      | [`.dmg`](https://github.com/OpenWhispr/openwhispr/releases/latest)                                                                                                                                                                                                                        |
 | Windows               | [`.exe`](https://github.com/OpenWhispr/openwhispr/releases/latest)                                                                                                                                                                                                                        |
+
+<!-- Unsupported upstream download rows retained for reference:
+| macOS (Intel) \*      | [`.dmg`](https://github.com/OpenWhispr/openwhispr/releases/latest) |
 | Linux                 | [`.AppImage`](https://github.com/OpenWhispr/openwhispr/releases/latest) / [`.deb`](https://github.com/OpenWhispr/openwhispr/releases/latest) / [`.rpm`](https://github.com/OpenWhispr/openwhispr/releases/latest) / [`.tar.gz`](https://github.com/OpenWhispr/openwhispr/releases/latest) |
 
 \* On Intel Macs, live speaker identification and voice fingerprinting are unavailable: they depend on ONNX Runtime, which [stopped shipping macOS x86_64 binaries in 1.24](https://github.com/microsoft/onnxruntime/releases/tag/v1.24.1). Meetings still record and transcribe normally, and notes search falls back to keyword matching instead of semantic search.
@@ -45,6 +49,9 @@ On macOS or x86_64 Linux, you can also install the community-maintained [Homebre
 ```bash
 brew install --cask openwhispr
 ```
+-->
+
+Linux and Intel Mac builds are discontinued in this fork. Existing source files and old release assets remain available. iOS uses the separate manual unsigned-build workflow described in the mobile documentation.
 
 ## Features
 
@@ -78,13 +85,16 @@ Desktop audio imports using your own API key automatically split files above the
 
 ## GitHub builds and local macOS signing
 
-This fork's desktop workflows build without publisher certificates. Pushes to `main`/`develop`, pull requests, and manual runs keep the existing quality checks. Version tags and the tagged-build workflow use the same unsigned build pipeline. After a successful tag-push build, **Publish Windows and Linux packages** publishes those installers to the version Release. Signed Mac DMGs are added locally after notarization.
+This fork's desktop workflows build Windows x64 and macOS arm64 without publisher certificates. Pushes to `main`/`develop`, pull requests, and manual runs keep the existing quality checks. Version tags and the tagged-build workflow use the same unsigned build pipeline. After a successful tag-push build, **Publish Windows packages** publishes the Windows installer to the version Release. Signed Mac DMGs are added locally after notarization. Linux and Intel Mac build jobs are disabled; Ubuntu runners remain in use for quality checks.
 
 Download the artifacts from the completed GitHub Actions run (retained for 7 days):
 
 - `windows-unsigned-build`: the unsigned NSIS installer and unpacked application. Windows does not require code signing to build or install this package; it may show an unknown-publisher or SmartScreen prompt.
-- `macos-arm64-unsigned-build` / `macos-x64-unsigned-build`: unsigned DMG/ZIP packages and an `*-unsigned-app.tar.gz` archive for the local release script. The archive preserves executable permissions and framework symlinks and includes the build's version, commit, and architecture.
-- `linux-build`: the Linux packages.
+- `macos-arm64-unsigned-build`: unsigned DMG/ZIP packages and an `*-unsigned-app.tar.gz` archive for the local release script. The archive preserves executable permissions and framework symlinks and includes the build's version, commit, and architecture.
+<!-- Previous unsupported artifacts:
+- `macos-x64-unsigned-build`: Intel Mac packages.
+- `linux-build`: Linux packages.
+-->
 
 GitHub needs no Azure signing credentials, Apple certificate, or notarization key. The CI-specific builder configs disable signing without changing the base config used by existing local signing setups. For manual unsigned builds, use `npm run build:win -- --publish never --config electron-builder.unsigned-win.json` or `npm run build:mac -- --publish never --config electron-builder.unsigned-mac.json`.
 
@@ -104,9 +114,9 @@ git switch --detach vX.Y.Z-ruivza.N
 NOTARY_PROFILE=speechdock-release bash scripts/release-local.sh --run RUN_ID --publish
 ```
 
-Use the run ID from **this OpenWhispr repository**, not an old SpeechDock run. The script verifies the remote tag, local commit, successful workflow, and artifact metadata. It signs Electron helpers, frameworks, native modules, and the app from the inside out using `resources/mac/entitlements.mac.plist`; then it notarizes and staples the app, creates and signs a DMG, notarizes/staples the DMG, and checks Gatekeeper. Both `arm64` and `x64` are processed by default. No app compilation runs locally. The release launcher (`scripts/release-local.sh`) may be updated from a reviewed later commit to fix download or publishing behavior without rebuilding the app. The checkout, signing helper, entitlements, and other build inputs must still match the release tag.
+Use the run ID from **this OpenWhispr repository**, not an old SpeechDock run. The script verifies the remote tag, local commit, successful workflow, and artifact metadata. It signs Electron helpers, frameworks, native modules, and the app from the inside out using `resources/mac/entitlements.mac.plist`; then it notarizes and staples the app, creates and signs a DMG, notarizes/staples the DMG, and checks Gatekeeper. Only `arm64` is processed. No app compilation runs locally. The release launcher (`scripts/release-local.sh`) may be updated from a reviewed later commit to fix download or publishing behavior without rebuilding the app. The checkout, signing helper, entitlements, and other build inputs must still match the release tag.
 
-Without `--publish`, signed DMGs stay in a new directory under `build/local-release.*/output`. Add `--arch arm64` or `--arch x64` to test just one Mac architecture locally. Publishing requires both architectures and adds the signed Mac packages and `SHA256SUMS-macos` to the version Release. GitHub automatically publishes Windows/Linux installers and `SHA256SUMS-windows-linux` after a successful tagged build; the Mac downloads only Mac artifacts. Either publisher can create the Release first, and neither overwrites existing assets. To publish Windows/Linux packages from an older successful tag build, run the **Publish Windows and Linux packages** workflow with its run ID. Fork revision releases use the `ruivza` update channel; the publishers generate its manifests from the final installer/ZIP bytes and upload metadata after the payloads. Fork revision tags are marked as GitHub prereleases.
+Without `--publish`, signed DMGs stay in a new directory under `build/local-release.*/output`. The default and `--arch arm64` both process Apple Silicon; legacy `--arch all` is an arm64 alias, and `--arch x64` is rejected. Publishing adds the signed arm64 Mac packages and `SHA256SUMS-macos` to the version Release. GitHub automatically publishes the Windows installer and `SHA256SUMS-windows` after a successful tagged build; the Mac downloads only its arm64 artifact. Either publisher can create the Release first, and neither overwrites existing assets. To publish Windows packages from an older successful tag build, run the **Publish Windows packages** workflow with its run ID. Fork revision releases use the `ruivza` update channel; the publishers generate its manifests from the final installer/ZIP bytes and upload metadata after the payloads. Fork revision tags are marked as GitHub prereleases.
 
 If several Developer ID certificates are installed, set `SIGNING_IDENTITY` to the exact certificate name or SHA-1 shown by `security find-identity -v -p codesigning`. `NOTARY_KEYCHAIN` optionally selects the Keychain containing the notary profile. Certificate private keys and notary credentials remain on the Mac.
 

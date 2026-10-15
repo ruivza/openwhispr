@@ -45,7 +45,8 @@ def select_packages(root, version):
     packages = []
     # Previously only installers were published, dropping NSIS differential maps.
     # for platform, endings in (("windows", (".exe",)), ("linux", (".AppImage", ".deb", ".rpm", ".tar.gz"))):
-    for platform, endings in (("windows", (".exe", ".exe.blockmap")), ("linux", (".AppImage", ".deb", ".rpm", ".tar.gz"))):
+    # for platform, endings in (("windows", (".exe", ".exe.blockmap")), ("linux", (".AppImage", ".deb", ".rpm", ".tar.gz"))):
+    for platform, endings in (("windows", (".exe", ".exe.blockmap")),):
         selected = [p for p in (root / platform).iterdir()
                     if p.is_file() and not p.is_symlink() and p.name.endswith(endings)]
         if not selected or any(version not in p.name for p in selected):
@@ -88,7 +89,8 @@ def update_manifests(packages, version, destination):
     manifests = []
     # for ending, channel in ((".exe", "latest.yml"), (".AppImage", "latest-linux.yml")):
     channel = "ruivza" if "-ruivza." in version else "latest"
-    for ending, suffix in ((".exe", ""), (".AppImage", "-linux")):
+    # for ending, suffix in ((".exe", ""), (".AppImage", "-linux")):
+    for ending, suffix in ((".exe", ""),):
         installers = [p for p in packages if p.name.endswith(ending)]
         if len(installers) != 1:
             raise ValueError("Exactly one current-architecture " + ending + " update is required")
@@ -101,12 +103,12 @@ def update_manifests(packages, version, destination):
         file_info = {"url": package.name, "sha512": checksum, "size": package.stat().st_size}
         # AppImages carry their differential map in the file followed by its
         # four-byte big-endian length. Keep that metadata when it is present.
-        if ending == ".AppImage" and file_info["size"] > 4:
-            with package.open("rb") as source:
-                source.seek(-4, 2)
-                blockmap_size = int.from_bytes(source.read(4), "big")
-            if 0 < blockmap_size <= file_info["size"] - 4:
-                file_info["blockMapSize"] = blockmap_size
+        # if ending == ".AppImage" and file_info["size"] > 4:
+        #     with package.open("rb") as source:
+        #         source.seek(-4, 2)
+        #         blockmap_size = int.from_bytes(source.read(4), "big")
+        #     if 0 < blockmap_size <= file_info["size"] - 4:
+        #         file_info["blockMapSize"] = blockmap_size
         info = {"version": version,
                 "files": [file_info],
                 "path": package.name, "sha512": checksum}
@@ -154,7 +156,8 @@ def upload_packages(repository, tag, packages):
                        "--pattern", package.name, "--dir", temp)
                     digest = "sha256:" + sha256(Path(temp) / package.name)
             if digest != expected:
-                if package.name == "SHA256SUMS-windows-linux":
+                # if package.name == "SHA256SUMS-windows-linux":
+                if package.name == "SHA256SUMS-windows":
                     # This publisher owns this generated manifest. Installer
                     # contents have already been checked and are never replaced.
                     gh("release", "upload", tag, str(package), "--repo", repository, "--clobber")
@@ -182,13 +185,15 @@ def main():
     tag = validate_run(run, repository, commit)
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
-        for platform, artifact in (("windows", "windows-unsigned-build"), ("linux", "linux-build")):
+        # for platform, artifact in (("windows", "windows-unsigned-build"), ("linux", "linux-build")):
+        for platform, artifact in (("windows", "windows-unsigned-build"),):
             print("Downloading " + artifact + " on the GitHub runner...", flush=True)
             gh("run", "download", run_id, "--repo", repository,
                "--name", artifact, "--dir", str(root / platform))
         packages = stage_packages(select_packages(root, tag[1:]), root / "packages")
         manifests = update_manifests(packages, tag[1:], root / "packages")
-        checksums = root / "SHA256SUMS-windows-linux"
+        # checksums = root / "SHA256SUMS-windows-linux"
+        checksums = root / "SHA256SUMS-windows"
         checksums.write_text("".join(sha256(p) + "  " + p.name + "\n" for p in packages))
         if api(f"repos/{repository}/commits/{tag}")["sha"] != commit:
             raise ValueError("Remote tag changed during download")

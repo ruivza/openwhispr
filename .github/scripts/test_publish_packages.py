@@ -31,20 +31,20 @@ class PublishingTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(ValueError):
                 publisher.validate_run({**run, key: value}, "ruivza/openwhispr", "a" * 40)
 
-    def test_selects_only_versioned_top_level_installers(self):
+    def test_selects_only_versioned_windows_installers_without_linux_artifacts(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            for platform in ("windows", "linux"):
+            for platform in ("windows",):
                 (root / platform).mkdir()
                 (root / platform / "latest.yml").write_text("not a release asset")
             exe = root / "windows/OpenWhispr Setup 1.10.4.exe"
-            deb = root / "linux/openwhispr_1.10.4_amd64.deb"
+            deb = root / "windows/openwhispr_1.10.4_amd64.deb"
             exe.write_bytes(b"exe")
             deb.write_bytes(b"deb")
             nested = root / "windows/win-unpacked"
             nested.mkdir()
             (nested / "OpenWhispr.exe").write_bytes(b"not an installer")
-            self.assertEqual(set(publisher.select_packages(root, "1.10.4")), {exe, deb})
+            self.assertEqual(set(publisher.select_packages(root, "1.10.4")), {exe})
             with self.assertRaises(ValueError):
                 publisher.select_packages(root, "1.10.5")
 
@@ -80,7 +80,7 @@ class PublishingTests(unittest.TestCase):
             image.write_bytes(b"appimage payload and map" + (3).to_bytes(4, "big"))
             staged = publisher.stage_packages([exe, image], root / "staged")
             manifests = publisher.update_manifests(staged, "1.10.4", root / "staged")
-            self.assertEqual({p.name for p in manifests}, {"latest.yml", "latest-linux.yml"})
+            self.assertEqual({p.name for p in manifests}, {"latest.yml"})
             for manifest in manifests:
                 info = json.loads(manifest.read_text())
                 target = root / "staged" / info["files"][0]["url"]
@@ -92,12 +92,12 @@ class PublishingTests(unittest.TestCase):
                 self.assertEqual(info["sha512"], expected)
             self.assertEqual(json.loads((root / "staged/latest.yml").read_text())["path"],
                              "OpenWhispr.Setup.1.10.4.exe")
-            self.assertEqual(json.loads((root / "staged/latest-linux.yml").read_text())["files"][0]["blockMapSize"], 3)
+            self.assertFalse((root / "staged/latest-linux.yml").exists())
 
     def test_missing_or_ambiguous_updater_payloads_fail_before_publishing(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            for names in (("package.exe",), ("one.exe", "two.exe", "package.AppImage")):
+            for names in (("package.AppImage",), ("one.exe", "two.exe", "package.AppImage")):
                 packages = [root / name for name in names]
                 for package in packages:
                     package.write_bytes(b"payload")
@@ -112,7 +112,7 @@ class PublishingTests(unittest.TestCase):
             for package in packages:
                 package.write_bytes(b"payload")
             manifests = publisher.update_manifests(packages, version, root)
-            self.assertEqual({p.name for p in manifests}, {"ruivza.yml", "ruivza-linux.yml"})
+            self.assertEqual({p.name for p in manifests}, {"ruivza.yml"})
             for manifest in manifests:
                 self.assertEqual(json.loads(manifest.read_text())["version"], version)
 
@@ -135,7 +135,7 @@ class PublishingTests(unittest.TestCase):
 
     def test_can_refresh_only_its_own_generated_checksum_manifest(self):
         with tempfile.TemporaryDirectory() as temp:
-            manifest = Path(temp) / "SHA256SUMS-windows-linux"
+            manifest = Path(temp) / "SHA256SUMS-windows"
             manifest.write_text("updated checksums")
             existing = {"assets": [{"name": manifest.name, "digest": "sha256:old"}]}
             with patch.object(publisher, "release_info", return_value=existing), patch.object(publisher, "gh") as gh:
@@ -151,6 +151,34 @@ class PublishingTests(unittest.TestCase):
                     patch.object(publisher, "gh") as gh:
                 publisher.upload_packages("ruivza/openwhispr", "v1.10.4", [package])
                 gh.assert_called_once_with("release", "upload", "v1.10.4", str(package), "--repo", "ruivza/openwhispr")
+
+    def test_main_downloads_and_publishes_windows_only(self):
+        tag = "v1.10.3-ruivza.1"
+        commit = "a" * 40
+        run = dict(head_branch=tag, head_sha=commit, status="completed", conclusion="success", event="push",
+                   name="Build tagged packages (unsigned)", path=".github/workflows/release.yml",
+                   repository={"full_name": "ruivza/openwhispr"}, head_repository={"full_name": "ruivza/openwhispr"})
+        downloads = []
+        published = []
+
+        def download(*args):
+            self.assertEqual(args[:3], ("run", "download", "123"))
+            downloads.append(args[args.index("--name") + 1])
+            destination = Path(args[args.index("--dir") + 1])
+            destination.mkdir()
+            (destination / f"OpenWhispr-{tag[1:]}.exe").write_bytes(b"installer")
+
+        def upload(repository, release_tag, packages):
+            self.assertEqual((repository, release_tag), ("ruivza/openwhispr", tag))
+            published.extend(p.name for p in packages)
+
+        with patch.dict(publisher.os.environ, RELEASE_REPOSITORY="ruivza/openwhispr", BUILD_RUN_ID="123"), \
+                patch.object(publisher, "api", side_effect=[run, {"sha": commit}, {"sha": commit}]), \
+                patch.object(publisher, "gh", side_effect=download), \
+                patch.object(publisher, "upload_packages", side_effect=upload):
+            publisher.main()
+        self.assertEqual(downloads, ["windows-unsigned-build"])
+        self.assertEqual(set(published), {f"OpenWhispr-{tag[1:]}.exe", "SHA256SUMS-windows", "ruivza.yml"})
 
 
 if __name__ == "__main__":

@@ -68,7 +68,14 @@ function createUpdateManager(autoUpdater, { translated = "0" } = {}) {
   Module._load = function loadWithMocks(request, parent, isMain) {
     if (request === "electron-updater") return { autoUpdater };
     if (request === "electron") return { autoUpdater: { on() {}, removeListener() {} } };
-    if (request === "child_process") return { execSync: () => translated };
+    if (request === "child_process") {
+      return {
+        execSync: () => {
+          if (translated instanceof Error) throw translated;
+          return translated;
+        },
+      };
+    }
     return originalLoad.call(this, request, parent, isMain);
   };
   const UpdateManager = require(updaterModulePath);
@@ -97,9 +104,9 @@ function setArch(arch) {
 beforeEach((t) => {
   t.mock.method(console, "log", () => {});
   t.mock.method(console, "error", () => {});
-  // The updater is unsupported on Linux outside an AppImage, so a test that
-  // does not pick a platform would never check for updates on a Linux CI runner.
+  // Exercise a supported Apple Silicon machine regardless of the test host.
   setPlatform("darwin");
+  setArch("arm64");
 });
 
 afterEach(() => {
@@ -155,11 +162,11 @@ test("runtime and packaged update sources point only at this fork", () => {
 test("the real GitHub provider selects fork tags and platform-specific metadata", async () => {
   const scenarios = [
     { platform: "darwin", arch: "arm64", file: "ruivza-arm64-mac.yml" },
-    { platform: "darwin", arch: "x64", file: "ruivza-x64-mac.yml" },
+    // { platform: "darwin", arch: "x64", file: "ruivza-x64-mac.yml" },
     { platform: "darwin", arch: "x64", translated: "1", file: "ruivza-arm64-mac.yml" },
     { platform: "win32", arch: "x64", file: "ruivza.yml" },
-    { platform: "linux", arch: "x64", file: "ruivza-linux.yml" },
-    { platform: "linux", arch: "arm64", file: "ruivza-linux-arm64.yml" },
+    // { platform: "linux", arch: "x64", file: "ruivza-linux.yml" },
+    // { platform: "linux", arch: "arm64", file: "ruivza-linux-arm64.yml" },
   ];
   const version = "1.10.3-ruivza.10";
   const tags = ["v1.10.4", "v1.10.3-beta.99", `v${version}`, "v1.10.3-ruivza.2"];
@@ -374,38 +381,57 @@ test("a failed background check only reaches renderers as update-error", (t) => 
   manager.cleanup();
 });
 
-test("on macOS and Windows the updater reports itself as supported", async () => {
-  for (const platform of ["darwin", "win32"]) {
-    setPlatform(platform);
-    const manager = createUpdateManager(makeAutoUpdater());
-    assert.equal((await manager.getUpdateStatus()).isSupported, true, platform);
+test("Apple Silicon, Rosetta migration and Windows updates remain supported", async () => {
+  for (const scenario of [
+    { platform: "darwin", arch: "arm64" },
+    { platform: "darwin", arch: "x64", translated: "1" },
+    { platform: "win32", arch: "x64" },
+  ]) {
+    setPlatform(scenario.platform);
+    setArch(scenario.arch);
+    const autoUpdater = makeAutoUpdater();
+    const manager = createUpdateManager(autoUpdater, scenario);
+    assert.equal((await manager.getUpdateStatus()).isSupported, true, scenario.platform);
+    assert.equal(autoUpdater.feeds.length, 1);
     manager.cleanup();
   }
 });
 
-test("a Linux AppImage is supported, but deb/rpm/tar.gz installs never touch the feed", async (t) => {
+test("Linux and Intel Macs never configure, check, download or install updates", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
-  setPlatform("linux");
+  for (const scenario of [
+    { platform: "linux", arch: "x64" },
+    { platform: "linux", arch: "x64", appImage: "/opt/OpenWhispr.AppImage" },
+    { platform: "linux", arch: "arm64", appImage: "/opt/OpenWhispr.AppImage" },
+    { platform: "darwin", arch: "x64", translated: "0" },
+    { platform: "darwin", arch: "x64", translated: new Error("Unknown sysctl key") },
+  ]) {
+    setPlatform(scenario.platform);
+    setArch(scenario.arch);
+    if (scenario.appImage) process.env.APPIMAGE = scenario.appImage;
+    else delete process.env.APPIMAGE;
+    const autoUpdater = makeAutoUpdater();
+    const manager = createUpdateManager(autoUpdater, scenario);
+    manager.setAutoUpdatesEnabled(true);
+    assert.equal((await manager.getUpdateStatus()).isSupported, false);
+    assert.deepEqual(autoUpdater.feeds, [], "unsupported platforms never configure a feed");
+    assert.deepEqual(autoUpdater.listeners, {}, "unsupported platforms never bind update events");
 
-  process.env.APPIMAGE = "/opt/OpenWhispr.AppImage";
-  const appImage = createUpdateManager(makeAutoUpdater());
-  assert.equal((await appImage.getUpdateStatus()).isSupported, true);
-  appImage.cleanup();
+    manager.checkForUpdatesOnStartup();
+    t.mock.timers.tick(STARTUP_DELAY_MS + PERIODIC_INTERVAL_MS);
+    manager._autoCheckForUpdates("Fixture");
+    const result = await manager.checkForUpdates();
+    assert.equal(autoUpdater.calls, 0, "neither automatic nor manual checks run");
+    assert.equal(result.updateAvailable, false);
+    assert.match(result.message, /not supported/);
 
-  delete process.env.APPIMAGE;
-  const autoUpdater = makeAutoUpdater();
-  const packaged = createUpdateManager(autoUpdater);
-  packaged.setAutoUpdatesEnabled(true);
-  assert.equal((await packaged.getUpdateStatus()).isSupported, false);
-
-  packaged.checkForUpdatesOnStartup();
-  t.mock.timers.tick(STARTUP_DELAY_MS + PERIODIC_INTERVAL_MS);
-  assert.equal(autoUpdater.calls, 0, "no automatic checks are scheduled");
-
-  const result = await packaged.checkForUpdates();
-  assert.equal(autoUpdater.calls, 0, "a manual check short-circuits too");
-  assert.equal(result.updateAvailable, false);
-  assert.match(result.message, /package manager/);
-
-  packaged.cleanup();
+    manager.updateAvailable = true;
+    manager._autoDownloadIfEnabled();
+    assert.equal((await manager.downloadUpdate()).success, false);
+    assert.equal(autoUpdater.downloads, 0, "even a stale available update never downloads");
+    manager.updateDownloaded = true;
+    assert.equal((await manager.installUpdate()).success, false);
+    assert.deepEqual(autoUpdater.installs, [], "even a stale downloaded update never installs");
+    manager.cleanup();
+  }
 });

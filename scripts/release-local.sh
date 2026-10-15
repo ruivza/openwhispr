@@ -7,14 +7,15 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_DIR"
 
 usage() {
+    # Previous options included --arch all|arm64|x64 and required both builds to publish.
     cat <<'HELP'
-Usage: bash scripts/release-local.sh --run RUN_ID [--repo OWNER/REPO] [--arch all|arm64|x64] [--publish]
+Usage: bash scripts/release-local.sh --run RUN_ID [--repo OWNER/REPO] [--arch arm64|all] [--publish]
 
 Download a successful tagged build and sign/notarize macOS packages locally.
-Default: sign both Mac architectures and keep the DMGs under build/.
+Default: sign the Apple Silicon arm64 build and keep the DMG under build/.
 --publish adds signed Mac DMGs, update ZIPs, manifests and checksums to the version Release.
-GitHub publishes Windows/Linux packages separately. Existing assets are not replaced.
---arch selects one Mac architecture for local testing; publishing requires all.
+GitHub publishes Windows packages separately. Existing assets are not replaced.
+--arch all is a compatibility alias for arm64. Intel x64 is no longer supported.
 
 Required: NOTARY_PROFILE, a notarytool profile in this Mac's Keychain.
 Optional: NOTARY_KEYCHAIN and SIGNING_IDENTITY (exact Developer ID name or SHA-1).
@@ -26,7 +27,8 @@ HELP
 
 RUN_ID=""
 REPOSITORY="ruivza/openwhispr"
-ARCH="all"
+# ARCH="all"
+ARCH="arm64"
 PUBLISH=false
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -48,8 +50,9 @@ done
 # Keep the original generic --repo option above for reference; this fork's
 # signed updates must never be uploaded to the upstream or another repository.
 [ "$REPOSITORY" = ruivza/openwhispr ] || { echo "Error: releases are restricted to ruivza/openwhispr." >&2; exit 1; }
-case "$ARCH" in all|arm64|x64) ;; *) echo "Error: invalid architecture." >&2; exit 1 ;; esac
-[ "$PUBLISH" = false ] || [ "$ARCH" = all ] || { echo "Error: publishing requires --arch all." >&2; exit 1; }
+# case "$ARCH" in all|arm64|x64) ;; *) echo "Error: invalid architecture." >&2; exit 1 ;; esac
+# [ "$PUBLISH" = false ] || [ "$ARCH" = all ] || { echo "Error: publishing requires --arch all." >&2; exit 1; }
+case "$ARCH" in all|arm64) ARCH="arm64" ;; *) echo "Error: only Apple Silicon arm64 is supported." >&2; exit 1 ;; esac
 [ "$(uname -s)" = Darwin ] || { echo "Error: run this script on your signing Mac." >&2; exit 1; }
 : "${NOTARY_PROFILE:?Set NOTARY_PROFILE to your local notarytool Keychain profile}"
 for tool in gh python3 git security codesign ditto hdiutil xcrun spctl lipo shasum; do
@@ -111,7 +114,8 @@ if result.get("status") != "Accepted":
 PY
 }
 
-if [ "$ARCH" = all ]; then ARCHS=(arm64 x64); else ARCHS=("$ARCH"); fi
+# if [ "$ARCH" = all ]; then ARCHS=(arm64 x64); else ARCHS=("$ARCH"); fi
+ARCHS=(arm64)
 for arch in "${ARCHS[@]}"; do
     echo "[$arch] Downloading macOS build from GitHub (this may take several minutes)..."
     gh run download "$RUN_ID" --repo "$REPOSITORY" \
@@ -122,7 +126,7 @@ for arch in "${ARCHS[@]}"; do
         "$WORK_DIR/extracted-$arch" "$VERSION" "$COMMIT" "$arch"
     APP="$WORK_DIR/extracted-$arch/OpenWhispr.app"
     EXPECTED_ARCH="$arch"
-    if [ "$arch" = x64 ]; then EXPECTED_ARCH=x86_64; fi
+    # if [ "$arch" = x64 ]; then EXPECTED_ARCH=x86_64; fi
     [[ "$(lipo -archs "$APP/Contents/MacOS/OpenWhispr")" = "$EXPECTED_ARCH" ]] || {
         echo "Error: app binary architecture does not match $arch." >&2; exit 1;
     }

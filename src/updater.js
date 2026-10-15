@@ -18,7 +18,8 @@ class ForkGitHubProvider extends GitHubProvider {
 
 // electron-updater can only replace an AppImage on Linux; deb, rpm and tar.gz
 // installs are updated by the package manager instead.
-const isUpdaterSupported = process.platform !== "linux" || Boolean(process.env.APPIMAGE);
+// const isUpdaterSupported = process.platform !== "linux" || Boolean(process.env.APPIMAGE);
+// This fork now publishes desktop updates for Windows and Apple Silicon only.
 
 class UpdateManager {
   constructor() {
@@ -34,6 +35,7 @@ class UpdateManager {
     this.windowManager = null;
     // null until the renderer syncs the preference, so nothing downloads unasked.
     this.autoUpdatesEnabled = null;
+    this.isUpdaterSupported = false;
 
     this.setupAutoUpdater();
   }
@@ -43,20 +45,14 @@ class UpdateManager {
   }
 
   setupAutoUpdater() {
-    if (process.env.NODE_ENV === "development") {
-      return;
-    }
-
     // Upstream feed (also the original electron-builder.json publish value):
     // autoUpdater.setFeedURL({ provider: "github", owner: "OpenWhispr", repo: "openwhispr", private: false });
     // A fork must never fall back to upstream: that would replace local changes.
     // Previous stable fork feed:
     // autoUpdater.setFeedURL({ provider: "github", owner: "ruivza", repo: "openwhispr", private: false });
 
-    // Use arch-specific update channel on macOS to prevent arm64/x64
-    // from downloading mismatched artifacts. Both builds publish to the
-    // same GitHub release, so without this they race on the shared metadata.
-    // The provider requests ruivza-arm64-mac.yml or ruivza-x64-mac.yml.
+    // Preserve migration from old x64 builds running under Rosetta. Intel Macs
+    // no longer receive updates; Apple Silicon requests ruivza-arm64-mac.yml.
     let nativeArch = process.arch;
     if (process.platform === "darwin") {
       // Detect Rosetta: if an x64 build is running on Apple Silicon,
@@ -80,6 +76,10 @@ class UpdateManager {
 
       // autoUpdater.channel = nativeArch === "arm64" ? "latest-arm64" : "latest-x64";
     }
+
+    this.isUpdaterSupported =
+      process.platform === "win32" || (process.platform === "darwin" && nativeArch === "arm64");
+    if (process.env.NODE_ENV === "development" || !this.isUpdaterSupported) return;
 
     autoUpdater.setFeedURL({
       provider: "custom",
@@ -193,10 +193,11 @@ class UpdateManager {
         };
       }
 
-      if (!isUpdaterSupported) {
+      if (!this.isUpdaterSupported) {
         return {
           updateAvailable: false,
-          message: "Updates are installed through the system package manager",
+          // message: "Updates are installed through the system package manager",
+          message: "Updates are not supported on this platform",
         };
       }
 
@@ -234,6 +235,10 @@ class UpdateManager {
         };
       }
 
+      if (!this.isUpdaterSupported) {
+        return { success: false, message: "Updates are not supported on this platform" };
+      }
+
       if (this.isDownloading) {
         return {
           success: true,
@@ -268,6 +273,10 @@ class UpdateManager {
           success: false,
           message: "Update installation is disabled in development mode",
         };
+      }
+
+      if (!this.isUpdaterSupported) {
+        return { success: false, message: "Updates are not supported on this platform" };
       }
 
       if (!this.updateDownloaded) {
@@ -314,7 +323,7 @@ class UpdateManager {
         updateAvailable: this.updateAvailable,
         updateDownloaded: this.updateDownloaded,
         isDevelopment: process.env.NODE_ENV === "development",
-        isSupported: isUpdaterSupported,
+        isSupported: this.isUpdaterSupported,
       };
     } catch (error) {
       console.error("❌ Error getting update status:", error);
@@ -351,7 +360,7 @@ class UpdateManager {
   }
 
   _autoDownloadIfEnabled() {
-    if (!this.autoUpdatesEnabled || !this.updateAvailable) return;
+    if (!this.isUpdaterSupported || !this.autoUpdatesEnabled || !this.updateAvailable) return;
     // downloadUpdate() is a no-op while a download is in flight or complete;
     // failures surface through the shared "error" handler and the renderers.
     this.downloadUpdate().catch(() => {});
@@ -360,6 +369,7 @@ class UpdateManager {
   // Checks always run so the sidebar can offer a manual download when automatic
   // updates are off; a failed background check is logged and never surfaced.
   _autoCheckForUpdates(label) {
+    if (!this.isUpdaterSupported) return;
     console.log(`🔄 ${label} update check...`);
     autoUpdater.checkForUpdates().catch((err) => {
       console.error(`${label} update check failed:`, err);
@@ -367,7 +377,7 @@ class UpdateManager {
   }
 
   checkForUpdatesOnStartup() {
-    if (process.env.NODE_ENV !== "development" && isUpdaterSupported) {
+    if (process.env.NODE_ENV !== "development" && this.isUpdaterSupported) {
       setTimeout(() => {
         this._autoCheckForUpdates("Startup");
       }, 3000);

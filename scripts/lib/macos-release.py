@@ -33,6 +33,8 @@ def validate_run(run, commit, tag):
 
 
 def validate_archive(archive, version, commit, arch):
+    if arch != "arm64":
+        raise ValueError("Only Apple Silicon arm64 releases are supported")
     members = archive.getmembers()
     entries = {}
     links = {}
@@ -180,6 +182,8 @@ def sign_app(app, version, identity, dry_run=False):
 
 def write_update_manifest(archive, version, arch):
     """Describe the final signed/stapled ZIP, never a CI unsigned archive."""
+    if arch != "arm64":
+        raise ValueError("Only Apple Silicon arm64 releases are supported")
     expected_name = f"OpenWhispr-{version}-mac-{arch}.zip"
     if archive.name != expected_name or not archive.is_file() or archive.is_symlink():
         raise ValueError("Expected a final versioned macOS update ZIP: " + expected_name)
@@ -211,7 +215,8 @@ def main():
     extract.add_argument("destination", type=Path)
     extract.add_argument("version")
     extract.add_argument("commit")
-    extract.add_argument("arch", choices=("arm64", "x64"))
+    # extract.add_argument("arch", choices=("arm64", "x64"))
+    extract.add_argument("arch", choices=("arm64",))
     sign = commands.add_parser("sign")
     sign.add_argument("app", type=Path)
     sign.add_argument("--version", required=True)
@@ -220,7 +225,8 @@ def main():
     manifest = commands.add_parser("manifest")
     manifest.add_argument("archive", type=Path)
     manifest.add_argument("version")
-    manifest.add_argument("arch", choices=("arm64", "x64"))
+    # manifest.add_argument("arch", choices=("arm64", "x64"))
+    manifest.add_argument("arch", choices=("arm64",))
     args = parser.parse_args()
     if args.command == "validate-run":
         validate_run(json.loads(args.file.read_text()), args.commit, args.tag)

@@ -6,6 +6,8 @@ import importlib.util
 import io
 import json
 import plistlib
+import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -73,6 +75,12 @@ class ArchiveTests(unittest.TestCase):
             metadata = {"version": VERSION, "commit": COMMIT, "arch": "arm64", key: value}
             with self.subTest(key=key), self.assertRaisesRegex(ValueError, "does not match"):
                 self.validate(metadata=metadata)
+
+    def test_rejects_x64_even_when_archive_metadata_matches(self):
+        metadata = {"version": VERSION, "commit": COMMIT, "arch": "x64"}
+        with tarfile.open(fileobj=io.BytesIO(archive_bytes(metadata=metadata)), mode="r:gz") as archive:
+            with self.assertRaisesRegex(ValueError, "Only Apple Silicon arm64"):
+                release.validate_archive(archive, VERSION, COMMIT, "x64")
 
     def test_rejects_traversal_absolute_and_duplicate_entries(self):
         for name in ("../outside", "/outside", "OpenWhispr.app/../outside", "OpenWhispr.app\\outside", "release.json"):
@@ -151,20 +159,22 @@ class SigningTests(unittest.TestCase):
 
 
 class UpdateManifestTests(unittest.TestCase):
-    def test_fork_revision_keeps_channels_separate_for_both_architectures(self):
+    def test_fork_revision_keeps_arm64_channel(self):
         with tempfile.TemporaryDirectory() as temp:
             version = "1.10.3-ruivza.1"
-            for arch in ("arm64", "x64"):
+            # for arch in ("arm64", "x64"):
+            for arch in ("arm64",):
                 archive = Path(temp) / f"OpenWhispr-{version}-mac-{arch}.zip"
                 archive.write_bytes(b"signed app")
                 manifest = release.write_update_manifest(archive, version, arch)
                 self.assertEqual(manifest.name, f"ruivza-{arch}-mac.yml")
                 self.assertEqual(json.loads(manifest.read_text())["version"], version)
 
-    def test_each_architecture_describes_the_final_zip_bytes(self):
+    def test_arm64_manifest_describes_the_final_zip_bytes(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            for arch in ("arm64", "x64"):
+            # for arch in ("arm64", "x64"):
+            for arch in ("arm64",):
                 archive = root / f"OpenWhispr-{VERSION}-mac-{arch}.zip"
                 archive.write_bytes(b"final signed and stapled app zip " + arch.encode())
                 manifest = release.write_update_manifest(archive, VERSION, arch)
@@ -175,6 +185,25 @@ class UpdateManifestTests(unittest.TestCase):
                 self.assertEqual(info["files"], [{"url": archive.name, "sha512": expected, "size": archive.stat().st_size}])
                 self.assertEqual(info["path"], archive.name)
                 self.assertEqual(info["sha512"], expected)
+
+    def test_x64_metadata_is_no_longer_published(self):
+        with tempfile.TemporaryDirectory() as temp:
+            archive = Path(temp) / f"OpenWhispr-{VERSION}-mac-x64.zip"
+            archive.write_bytes(b"old Intel app")
+            with self.assertRaisesRegex(ValueError, "Only Apple Silicon arm64"):
+                release.write_update_manifest(archive, VERSION, "x64")
+            self.assertEqual(list(Path(temp).glob("*.yml")), [])
+
+    def test_cli_rejects_x64_before_reading_release_artifacts(self):
+        for args in [
+            ["manifest", "unused.zip", VERSION, "x64"],
+            ["extract", "unused.tar.gz", "unused-output", VERSION, COMMIT, "x64"],
+        ]:
+            with self.subTest(command=args[0]):
+                result = subprocess.run([sys.executable, str(PROJECT / "scripts/lib/macos-release.py"), *args],
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("invalid choice: 'x64'", result.stderr)
 
     def test_unsigned_or_wrong_architecture_archive_names_are_refused(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -1,9 +1,11 @@
 name: Update Nix package
 
-on:
-  release:
-    types: [published]
-  workflow_dispatch:
+# Linux distribution updates are retired. Preserve the original triggers.
+# on:
+#   release:
+#     types: [published]
+#   workflow_dispatch:
+on: workflow_dispatch
 
 permissions:
   contents: write
@@ -11,6 +13,8 @@ permissions:
 
 jobs:
   update-nix:
+    # Keep the original updater disabled, including manual invocations.
+    if: ${{ false }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -75,7 +75,9 @@ jobs:
 
   build-linux:
     needs: quality
-    if: needs.quality.outputs.build == 'true'
+    # Linux packages are no longer supported by this fork.
+    # if: needs.quality.outputs.build == 'true'
+    if: ${{ false }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -288,7 +290,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch: [x64, arm64]
+        # arch: [x64, arm64]
+        arch: [arm64]
     steps:
       - uses: actions/checkout@v4
 
@@ -301,11 +304,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install ffmpeg-static for target architecture
-        if: matrix.arch == 'x64'
-        run: |
-          rm -f node_modules/ffmpeg-static/ffmpeg
-          npm_config_arch=x64 node node_modules/ffmpeg-static/install.js
+      # Intel macOS packages are no longer built.
+      # - name: Install ffmpeg-static for target architecture
+      #   if: matrix.arch == 'x64'
+      #   run: |
+      #     rm -f node_modules/ffmpeg-static/ffmpeg
+      #     npm_config_arch=x64 node node_modules/ffmpeg-static/install.js
 
       - name: Cache native binaries
         uses: actions/cache@v4
@@ -419,7 +423,8 @@ jobs:
 
   desktop-status:
     name: Desktop CI
-    needs: [changes, quality, build-linux, build-windows, build-macos]
+    # needs: [changes, quality, build-linux, build-windows, build-macos]
+    needs: [changes, quality, build-windows, build-macos]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -431,7 +436,7 @@ jobs:
           DESKTOP: ${{ needs.changes.outputs.desktop }}
           QUALITY_RESULT: ${{ needs.quality.result }}
           BUILD: ${{ needs.quality.outputs.build }}
-          LINUX_RESULT: ${{ needs.build-linux.result }}
+          # LINUX_RESULT: ${{ needs.build-linux.result }}
           WINDOWS_RESULT: ${{ needs.build-windows.result }}
           MACOS_RESULT: ${{ needs.build-macos.result }}
         run: |
@@ -439,7 +444,7 @@ jobs:
           if [ "$DESKTOP" = true ]; then
             test "$QUALITY_RESULT" = success
             if [ "$BUILD" = true ]; then
-              test "$LINUX_RESULT" = success
+              # test "$LINUX_RESULT" = success
               test "$WINDOWS_RESULT" = success
               test "$MACOS_RESULT" = success
             fi

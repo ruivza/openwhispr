@@ -1,4 +1,5 @@
-name: Publish Windows and Linux packages
+# name: Publish Windows and Linux packages
+name: Publish Windows packages
 
 on:
   workflow_run:
@@ -39,7 +40,8 @@ jobs:
           persist-credentials: false
       - name: Check publishing logic
         run: python3 -m unittest discover -s .github/scripts -p 'test_publish_packages.py'
-      - name: Publish unsigned Windows and Linux packages
+      # - name: Publish unsigned Windows and Linux packages
+      - name: Publish unsigned Windows packages
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_REPOSITORY: ${{ github.repository }}

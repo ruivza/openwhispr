@@ -1,25 +1,29 @@
 name: Build Linux Text Monitor
 
-on:
-  push:
-    paths:
-      - 'resources/linux-text-monitor.c'
-      - '.github/workflows/build-linux-text-monitor.yml'
-    branches:
-      - main
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version tag (e.g., 1.0.0)'
-        required: false
-        default: '1.0.0'
-        type: string
+# Linux support is retired. Keep the original triggers for reference.
+# on:
+#   push:
+#     paths:
+#       - 'resources/linux-text-monitor.c'
+#       - '.github/workflows/build-linux-text-monitor.yml'
+#     branches:
+#       - main
+#   workflow_dispatch:
+#     inputs:
+#       version:
+#         description: 'Version tag (e.g., 1.0.0)'
+#         required: false
+#         default: '1.0.0'
+#         type: string
+on: workflow_dispatch
 
 permissions:
   contents: write
 
 jobs:
   build:
+    # Preserve the original build without allowing manual runs to publish it.
+    if: ${{ false }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
