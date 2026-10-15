@@ -108,7 +108,8 @@ Maintainers shipping a separate fork must also replace the organization-specific
 
 The fork displays iOS versions as `X.Y.Z.N`, currently `1.2.3.1`. Apple metadata retains `X.Y.Z` as Version and uses `N` as Build for the main app and both extensions. `config/fork-version.json` tracks the official mobile version and fork revision; daily upstream synchronization increments that revision when mobile files change and resets it to 1 when the official mobile version increases.
 
-The **Build unsigned iOS app** Actions workflow builds a Release arm64 device archive without Apple signing credentials or an EAS account. It is manually triggered and uploads artifacts, without publishing a release. Its first native build still needs to be run and verified on GitHub.
+The **Build unsigned iOS app** Actions workflow builds a Release arm64 device archive without Apple signing credentials or an EAS account. It is manually triggered and uploads artifacts, without publishing a release. The native archive and unsigned IPA were produced successfully in [this verified build](https://github.com/ruivza/openwhispr/actions/runs/38693843516); local signing and device testing still need to be completed.
+<!-- Previous status: Its first native build still needs to be run and verified on GitHub. -->
 
 1. Push the reviewed changes to your fork. Open **Actions → Build unsigned iOS app → Run workflow**.
 2. Enter your own bundle identifier, for example `com.yourname.openwhispr`. Keep this identity for later signing and updates. The build derives `.keyboard`, `.activity`, `group.<bundle identifier>`, and a matching URL scheme from it; the upstream Apple team is omitted only in this unsigned build mode.
