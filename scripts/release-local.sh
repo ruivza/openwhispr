@@ -161,9 +161,39 @@ PY
 # if [ "$ARCH" = all ]; then ARCHS=(arm64 x64); else ARCHS=("$ARCH"); fi
 ARCHS=(arm64)
 for arch in "${ARCHS[@]}"; do
-    echo "[$arch] Downloading macOS build from GitHub (this may take several minutes)..."
-    gh run download "$RUN_ID" --repo "$REPOSITORY" \
-        --name "macos-$arch-unsigned-build" --dir "$WORK_DIR/download-$arch"
+    # echo "[$arch] Downloading macOS build from GitHub (this may take several minutes)..."
+    # gh run download "$RUN_ID" --repo "$REPOSITORY" \
+    #     --name "macos-$arch-unsigned-build" --dir "$WORK_DIR/download-$arch"
+    SIGNING_ARTIFACT="macos-$arch-signing-$RUN_ID"
+    gh api "repos/$REPOSITORY/actions/artifacts?name=$SIGNING_ARTIFACT&per_page=100" > "$WORK_DIR/signing-artifacts-$arch.json"
+    SIGNING_RUN_ID=$(python3 - "$WORK_DIR/signing-artifacts-$arch.json" "$SIGNING_ARTIFACT" "$RUN_ID" "$REPOSITORY" <<'PY_SIGNING_ARTIFACT'
+import json, subprocess, sys
+
+file, name, build_run_id, repository = sys.argv[1:]
+for artifact in json.load(open(file)).get("artifacts", []):
+    if artifact.get("name") != name or artifact.get("expired"):
+        continue
+    source = artifact.get("workflow_run", {}).get("id")
+    if not isinstance(source, int) or source <= 0:
+        continue
+    if str(source) == build_run_id:
+        print(source)
+        break
+    run = json.loads(subprocess.check_output(["gh", "api", f"repos/{repository}/actions/runs/{source}"], text=True))
+    if (run.get("status"), run.get("conclusion"), run.get("event"), run.get("name"), run.get("path")) != (
+            "completed", "success", "workflow_dispatch", "Prepare macOS signing artifact", ".github/workflows/prepare-macos-signing.yml"):
+        continue
+    if any(run.get(field, {}).get("full_name") != repository for field in ("repository", "head_repository")):
+        continue
+    print(source)
+    break
+else:
+    sys.exit("Error: tar.gz-only signing artifact missing; run Prepare macOS signing artifact for this build ID. No application rebuild is needed.")
+PY_SIGNING_ARTIFACT
+)
+    echo "[$arch] Downloading only the signing tar.gz from GitHub..."
+    gh run download "$SIGNING_RUN_ID" --repo "$REPOSITORY" \
+        --name "$SIGNING_ARTIFACT" --dir "$WORK_DIR/download-$arch"
     echo "[$arch] Download complete. Validating and extracting app..."
     # python3 "$SCRIPT_DIR/lib/macos-release.py" extract \
     #     "$WORK_DIR/download-$arch/OpenWhispr-macos-$arch-unsigned-app.tar.gz" \

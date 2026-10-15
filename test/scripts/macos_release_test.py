@@ -1,6 +1,7 @@
 """Release input validation and Electron signing order, without signing credentials."""
 
 import base64
+import contextlib
 import hashlib
 import importlib.util
 import io
@@ -12,6 +13,7 @@ import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 PROJECT = Path(__file__).resolve().parents[2]
@@ -231,6 +233,53 @@ class LauncherProvenanceTests(unittest.TestCase):
         with tarfile.open(fileobj=io.BytesIO(archive_bytes(metadata=metadata)), mode="r:gz") as archive:
             with self.assertRaisesRegex(ValueError, "does not match"):
                 release.validate_archive(archive, VERSION, self.release_commit, "arm64")
+
+
+class SigningArtifactTests(unittest.TestCase):
+    def select(self, artifacts, prepared_run=None):
+        with tempfile.TemporaryDirectory() as temp:
+            file = Path(temp) / "artifacts.json"
+            file.write_text(json.dumps({"artifacts": artifacts}))
+            launcher = (PROJECT / "scripts/release-local.sh").read_text()
+            validator = launcher.split("<<'PY_SIGNING_ARTIFACT'\n", 1)[1].split("\nPY_SIGNING_ARTIFACT", 1)[0]
+            output = io.StringIO()
+            with patch.object(sys, "argv", ["selector", str(file), "macos-arm64-signing-123", "123", "ruivza/openwhispr"]), \
+                    patch.object(subprocess, "check_output", return_value=json.dumps(prepared_run)) as gh, \
+                    contextlib.redirect_stdout(output):
+                exec(compile(validator, "signing-artifact-selector", "exec"), {})
+            return output.getvalue().strip(), gh.call_args_list
+
+    def artifact(self, run_id=456):
+        return {"name": "macos-arm64-signing-123", "expired": False, "workflow_run": {"id": run_id}}
+
+    def prepared_run(self):
+        return {"status": "completed", "conclusion": "success", "event": "workflow_dispatch",
+                "name": "Prepare macOS signing artifact", "path": ".github/workflows/prepare-macos-signing.yml",
+                "repository": {"full_name": "ruivza/openwhispr"},
+                "head_repository": {"full_name": "ruivza/openwhispr"}}
+
+    def test_uses_tar_only_artifact_from_original_build(self):
+        selected, calls = self.select([self.artifact(123)])
+        self.assertEqual(selected, "123")
+        self.assertEqual(calls, [])
+
+    def test_uses_verified_repacked_artifact_while_retaining_original_build_id(self):
+        selected, calls = self.select([self.artifact()], self.prepared_run())
+        self.assertEqual(selected, "456")
+        self.assertEqual(calls[0].args[0], ["gh", "api", "repos/ruivza/openwhispr/actions/runs/456"])
+
+    def test_never_falls_back_to_large_legacy_artifact(self):
+        for artifacts in ([], [{**self.artifact(), "name": "macos-arm64-unsigned-build"}],
+                          [{**self.artifact(), "expired": True}]):
+            with self.subTest(artifacts=artifacts), self.assertRaisesRegex(SystemExit, "No application rebuild"):
+                self.select(artifacts)
+
+    def test_rejects_failed_or_untrusted_repacking_runs(self):
+        for key, value in (("status", "in_progress"), ("conclusion", "failure"), ("event", "push"),
+                           ("name", "Other workflow"), ("path", ".github/workflows/other.yml"),
+                           ("head_repository", {"full_name": "someone/fork"})):
+            with self.subTest(key=key), self.assertRaises(SystemExit):
+                self.select([self.artifact()], {**self.prepared_run(), key: value})
 
 
 class SigningTests(unittest.TestCase):

@@ -412,12 +412,15 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v7
         with:
-          name: macos-${{ matrix.arch }}-unsigned-build
+          # name: macos-${{ matrix.arch }}-unsigned-build
+          name: macos-${{ matrix.arch }}-signing-${{ github.run_id }}
           # Archives preserve executable permissions and framework symlinks.
-          path: |
-            dist/*.dmg
-            dist/*.zip
-            dist/*-unsigned-app.tar.gz
+          # The signing script only consumes the tar archive; avoid duplicate app downloads.
+          # path: |
+          #   dist/*.dmg
+          #   dist/*.zip
+          #   dist/*-unsigned-app.tar.gz
+          path: dist/*-unsigned-app.tar.gz
           if-no-files-found: error
           retention-days: 7
 

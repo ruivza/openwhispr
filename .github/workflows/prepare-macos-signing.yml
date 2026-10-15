@@ -1,0 +1,65 @@
+name: Prepare macOS signing artifact
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: "Existing successful build run ID; copies its tar.gz without compiling"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  prepare:
+    if: github.repository == 'ruivza/openwhispr'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate and copy the existing signing archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_RUN_ID: ${{ inputs.build_run_id }}
+        run: |
+          python3 - <<'PY'
+          import importlib.util, os, re, subprocess, tarfile
+          from pathlib import Path
+
+          repository, run_id = os.environ["GITHUB_REPOSITORY"], os.environ["BUILD_RUN_ID"]
+          if repository != "ruivza/openwhispr" or not re.fullmatch(r"[0-9]+", run_id):
+              raise ValueError("Invalid source repository or build run ID")
+          spec = importlib.util.spec_from_file_location("publisher", ".github/scripts/publish-packages.py")
+          publisher = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(publisher)
+          run = publisher.api(f"repos/{repository}/actions/runs/{run_id}")
+          candidate = run.get("head_branch", "")
+          if re.fullmatch(publisher.VERSION_TAG_PATTERN, candidate):
+              commit = publisher.api(f"repos/{repository}/commits/{candidate}")["sha"]
+              tag = publisher.validate_run(run, repository, commit)
+          else:
+              tag, _ = publisher.validate_reused_run(run, repository)
+          print(f"Copying original archive from successful build {run_id} ({run['head_sha']}) for {tag}", flush=True)
+          subprocess.run(["gh", "run", "download", run_id, "--repo", repository,
+                          "--name", "macos-arm64-unsigned-build", "--dir", "signing-input"], check=True)
+          spec = importlib.util.spec_from_file_location("macos_release", "scripts/lib/macos-release.py")
+          release = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(release)
+          archive = Path("signing-input/OpenWhispr-macos-arm64-unsigned-app.tar.gz")
+          with tarfile.open(archive, "r:gz") as contents:
+              release.validate_archive(contents, tag[1:], run["head_sha"], "arm64")
+          print(f"Validated original signing archive: {archive.stat().st_size} bytes", flush=True)
+          print(f"Original archive SHA256: {publisher.sha256(archive)}", flush=True)
+          PY
+      - name: Upload only the original signing tar.gz
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-arm64-signing-${{ inputs.build_run_id }}
+          path: signing-input/OpenWhispr-macos-arm64-unsigned-app.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7

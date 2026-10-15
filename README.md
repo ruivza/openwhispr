@@ -102,7 +102,13 @@ This fork's desktop workflows build Windows x64 and macOS arm64 without publishe
 Download the artifacts from the completed GitHub Actions run (retained for 7 days):
 
 - `windows-unsigned-build`: the unsigned NSIS installer and unpacked application. Windows does not require code signing to build or install this package; it may show an unknown-publisher or SmartScreen prompt.
+
+<!-- Previous combined artifact:
 - `macos-arm64-unsigned-build`: unsigned DMG/ZIP packages and an `*-unsigned-app.tar.gz` archive for the local release script. The archive preserves executable permissions and framework symlinks and includes the build's version, commit, and architecture.
+-->
+
+- `macos-arm64-signing-BUILD_RUN_ID`: only the `*-unsigned-app.tar.gz` archive needed by the local release script, without duplicate DMG/ZIP packages. The archive preserves executable permissions and framework symlinks and includes the original build's version, commit, and architecture.
+
 <!-- Previous unsupported artifacts:
 - `macos-x64-unsigned-build`: Intel Mac packages.
 - `linux-build`: Linux packages.
@@ -139,6 +145,8 @@ NOTARY_PROFILE=speechdock-release bash scripts/release-local.sh --run RUN_ID --p
 Use the run ID from **this OpenWhispr repository**, not an old SpeechDock run. The script verifies the remote tag, local commit, successful workflow, and artifact metadata. It signs Electron helpers, frameworks, native modules, and the app from the inside out using `resources/mac/entitlements.mac.plist`; then it notarizes and staples the app, creates and signs a DMG, notarizes/staples the DMG, and checks Gatekeeper. Only `arm64` is processed. No app compilation runs locally. The release launcher (`scripts/release-local.sh`) may be updated from a reviewed later commit to fix download or publishing behavior without rebuilding the app. The checkout, signing helper, entitlements, and other build inputs must still match the release tag.
 
 An existing successful manual **Build unsigned packages** run from this fork's `main` may also be reused when its version matches and the release tag differs only in the documented README/CONTRIBUTING paths or Markdown under `docs/`. The launcher verifies the real workflow provenance and Git history, and validates `release.json` against the original build commit, without rewriting it. Runtime, dependency, signing-helper or workflow differences are rejected.
+
+For older combined artifacts, run **Prepare macOS signing artifact** manually with `build_run_id` set to the original build ID (`38694847321` for this release). It extracts the existing tar archive into `macos-arm64-signing-38694847321`; it does not compile the app. After preparation succeeds, the signing command still uses the original build ID. The updated launcher locates the verified signing artifact and does not download the old combined DMG/ZIP artifact.
 
 For `v1.10.3-ruivza.2`, reuse build `38694847321` without rebuilding. Fetch the reviewed launcher from `main`, but keep the signing helper and all other files at the tag:
 
