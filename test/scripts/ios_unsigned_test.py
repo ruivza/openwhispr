@@ -1,3 +1,4 @@
+import copy
 import hashlib
 import importlib.util
 import json
@@ -49,8 +50,9 @@ class UnsignedIosTests(unittest.TestCase):
             executable.chmod(0o755)
             entitlement = self.ios / f"{name}/{name}.entitlements"
             write_plist(entitlement, {"com.apple.security.application-groups": ["group." + ID]})
-            settings.append({"buildSettings": {
+            settings.append({"target": name, "action": "build", "buildSettings": {
                 "PRODUCT_BUNDLE_IDENTIFIER": ID + suffix,
+                "TARGET_NAME": name,
                 "SRCROOT": str(self.ios.resolve()),
                 "CODE_SIGN_ENTITLEMENTS": str(entitlement.relative_to(self.ios)),
                 "CODE_SIGNING_ALLOWED": "NO", "DEVELOPMENT_TEAM": "",
@@ -101,6 +103,71 @@ class UnsignedIosTests(unittest.TestCase):
         values["CFBundleIdentifier"] = ID + ".other"
         write_plist(info, values)
         with self.assertRaisesRegex(ValueError, "extensions"):
+            self.package()
+
+    def test_accepts_xcode_alltargets_identical_app_record_without_losing_extensions(self):
+        settings = json.loads(self.settings.read_text())
+        # The real Xcode 26.4.1 output contains the main app twice, followed by
+        # the Activity and Keyboard records; the duplicate is fully identical.
+        settings.insert(1, copy.deepcopy(settings[0]))
+        self.settings.write_text(json.dumps(settings))
+        self.package()
+        entitlements = json.loads((self.output / "entitlements.json").read_text())
+        self.assertEqual(set(entitlements), {ID, ID + ".keyboard", ID + ".activity"})
+        with zipfile.ZipFile(self.output / "OpenWhispr-unsigned.ipa") as ipa:
+            self.assertIn("Payload/OpenWhispr.app/PlugIns/Keyboard.appex/Keyboard", ipa.namelist())
+            self.assertIn("Payload/OpenWhispr.app/PlugIns/Activity.appex/Activity", ipa.namelist())
+
+    def test_rejects_non_equivalent_duplicates_even_with_matching_app_groups(self):
+        original = json.loads(self.settings.read_text())
+        alternate = self.ios / "Other/Other.entitlements"
+        write_plist(alternate, {"com.apple.security.application-groups": ["group." + ID]})
+        changes = [
+            {"target": "OtherTarget"},
+            {"action": "archive"},
+            {"buildSettings": {"TARGET_NAME": "OtherTarget"}},
+            {"buildSettings": {"CODE_SIGN_ENTITLEMENTS": str(alternate.relative_to(self.ios))}},
+            {"buildSettings": {"SDKROOT": "iphonesimulator"}},
+        ]
+        for change in changes:
+            with self.subTest(change=change):
+                settings = copy.deepcopy(original)
+                duplicate = copy.deepcopy(settings[0])
+                if "buildSettings" in change:
+                    duplicate["buildSettings"].update(change["buildSettings"])
+                else:
+                    duplicate.update(change)
+                settings.append(duplicate)
+                self.settings.write_text(json.dumps(settings))
+                with self.assertRaisesRegex(ValueError, "Conflicting application build settings"):
+                    self.package()
+
+    def test_duplicate_records_still_validate_group_source_and_signing(self):
+        original = json.loads(self.settings.read_text())
+        bad_entitlement = self.ios / "Other/Bad.entitlements"
+        write_plist(bad_entitlement, {"com.apple.security.application-groups": ["group.other"]})
+        cases = [
+            ({"SRCROOT": str(self.root)}, "generated iOS project"),
+            ({"CODE_SIGN_ENTITLEMENTS": str(bad_entitlement.relative_to(self.ios))}, "App Group"),
+            ({"DEVELOPMENT_TEAM": "UNEXPECTED"}, "clear the team"),
+            ({"CODE_SIGNING_ALLOWED": "YES"}, "disable signing"),
+        ]
+        for change, message in cases:
+            with self.subTest(change=change):
+                settings = copy.deepcopy(original)
+                duplicate = copy.deepcopy(settings[0])
+                duplicate["buildSettings"].update(change)
+                settings.append(duplicate)
+                self.settings.write_text(json.dumps(settings))
+                with self.assertRaisesRegex(ValueError, message):
+                    self.package()
+
+    def test_duplicate_main_record_cannot_replace_a_missing_extension_identity(self):
+        settings = json.loads(self.settings.read_text())
+        settings[-1]["buildSettings"]["PRODUCT_BUNDLE_IDENTIFIER"] = "com.other.activity"
+        settings.insert(1, copy.deepcopy(settings[0]))
+        self.settings.write_text(json.dumps(settings))
+        with self.assertRaisesRegex(ValueError, "Missing build settings"):
             self.package()
 
     def test_rejects_mismatched_app_group_or_signing_team(self):

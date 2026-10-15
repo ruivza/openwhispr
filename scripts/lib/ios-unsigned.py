@@ -49,6 +49,7 @@ def validate_app(app, bundle_id):
 def entitlement_manifest(settings_file, bundle_ids, ios_root):
     settings = json.loads(settings_file.read_text(encoding="utf-8"))
     result = {}
+    validated_targets = {}
     ios_root = ios_root.resolve()
     expected_group = "group." + bundle_ids[0]
     for target in settings:
@@ -56,8 +57,8 @@ def entitlement_manifest(settings_file, bundle_ids, ios_root):
         bundle_id = values.get("PRODUCT_BUNDLE_IDENTIFIER")
         if bundle_id not in bundle_ids:
             continue
-        if bundle_id in result:
-            raise ValueError("Duplicate application build settings")
+        # if bundle_id in result:
+        #     raise ValueError("Duplicate application build settings")
         source_root = Path(values.get("SRCROOT", "")).resolve()
         if source_root != ios_root:
             raise ValueError("Entitlements must come from the generated iOS project")
@@ -70,6 +71,13 @@ def entitlement_manifest(settings_file, bundle_ids, ios_root):
             raise ValueError("The app and both extensions must share their derived App Group")
         if values.get("DEVELOPMENT_TEAM") or values.get("CODE_SIGNING_ALLOWED") != "NO":
             raise ValueError("The archive build settings must disable signing and clear the team")
+        # Xcode -alltargets can emit the same application record twice. Every
+        # copy must pass validation, and only fully equivalent records may merge.
+        if bundle_id in result:
+            if validated_targets[bundle_id] != target or result[bundle_id] != entitlements:
+                raise ValueError("Conflicting application build settings")
+            continue
+        validated_targets[bundle_id] = target
         result[bundle_id] = entitlements
     if set(result) != set(bundle_ids):
         raise ValueError("Missing build settings for the app or its extensions")
