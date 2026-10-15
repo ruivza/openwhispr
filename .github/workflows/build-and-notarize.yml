@@ -283,6 +283,9 @@ jobs:
           path: dist/
           retention-days: 7
 
+      - name: Verify packaged Windows startup
+        run: node scripts/verify-packaged-startup.cjs "dist/win-unpacked/OpenWhispr.exe"
+
   build-macos:
     needs: quality
     if: needs.quality.outputs.build == 'true'
@@ -423,6 +426,9 @@ jobs:
           path: dist/*-unsigned-app.tar.gz
           if-no-files-found: error
           retention-days: 7
+
+      - name: Verify packaged macOS startup
+        run: node scripts/verify-packaged-startup.cjs "dist/mac-${{ matrix.arch }}/OpenWhispr.app"
 
   desktop-status:
     name: Desktop CI
