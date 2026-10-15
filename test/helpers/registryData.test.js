@@ -1,6 +1,40 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const path = require("node:path");
+const { spawnSync } = require("node:child_process");
 const seed = require("../../src/models/modelRegistryData.json");
+
+test("cold renderer bootstrap filters model minimums using the actual fork package version", () => {
+  // A child gives the real JSON imports and module initialization a fresh cache.
+  // Only the in-memory catalog fixture changes; package.json stays untouched.
+  const result = spawnSync(
+    process.execPath,
+    [
+      "-e",
+      `
+        const assert = require("node:assert/strict");
+        const data = require("./src/models/modelRegistryData.json");
+        const appVersion = require("./package.json").version;
+        const baseVersion = appVersion.split("-ruivza.")[0];
+        const [major, minor, patch] = baseVersion.split(".").map(Number);
+        data.cloudProviders[0].models.push(
+          { id: "bootstrap-current", minAppVersion: baseVersion },
+          { id: "bootstrap-future", minAppVersion: [major, minor, patch + 1].join(".") }
+        );
+        const store = require("./src/models/registryData.js");
+        const models = store.getRegistryData().cloudProviders[0].models;
+        assert.ok(models.some(model => model.id === "bootstrap-current"));
+        assert.ok(!models.some(model => model.id === "bootstrap-future"));
+      `,
+    ],
+    {
+      cwd: path.resolve(__dirname, "../.."),
+      encoding: "utf8",
+      env: { ...process.env, NODE_OPTIONS: "" },
+    }
+  );
+  assert.equal(result.status, 0, result.stderr);
+});
 
 test("one atomic update reaches CJS helpers, ESM readers and derived model lists", async () => {
   const store = require("../../src/models/registryData.js");

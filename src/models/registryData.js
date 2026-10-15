@@ -1,5 +1,6 @@
 import bundled from "./modelRegistryData.json" with { type: "json" };
 import { selectCatalogForVersion } from "./registrySelection.js";
+import { normalizeRegistryAppVersion } from "./registryAppVersion.js";
 import appPackage from "../../package.json" with { type: "json" };
 import metadata from "./registryMetadata.json" with { type: "json" };
 
@@ -13,7 +14,10 @@ function freeze(value) {
 
 // A stable top-level reference keeps existing CJS and ESM readers live. Each
 // replacement owns immutable child objects, so in-flight work keeps its config.
-export const registryData = { ...freeze(selectCatalogForVersion(bundled, {}, appPackage.version)) };
+// export const registryData = { ...freeze(selectCatalogForVersion(bundled, {}, appPackage.version)) };
+export const registryData = {
+  ...freeze(selectCatalogForVersion(bundled, {}, normalizeRegistryAppVersion(appPackage.version))),
+};
 let version = metadata.manifestVersion;
 const listeners = new Set();
 export const getRegistryData = () => registryData;

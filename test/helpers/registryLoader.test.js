@@ -7,6 +7,7 @@ const { generateKeyPairSync } = require("node:crypto");
 const { signEnvelope, MAX_ENVELOPE_BYTES } = require("../../src/models/registryEnvelope.cjs");
 const { createRegistryLoader } = require("../../src/helpers/registryLoader");
 const seed = require("../../src/models/modelRegistryData.json");
+const appVersion = require("../../package.json").version;
 const pair = generateKeyPairSync("ed25519");
 const trustedKeys = { fixture: pair.publicKey.export({ type: "spki", format: "pem" }) };
 function signed(version, data = seed) {
@@ -205,4 +206,94 @@ test("future entries in the bundle do not prevent later compatible publications"
   await x.loader.refresh();
   assert.equal(x.loader.getSnapshot().manifestVersion, 3);
   assert.equal(x.loader.getSnapshot().data.cloudProviders[0].models.at(-1).id, "supported-c");
+});
+
+function forkVersionCatalog() {
+  const baseVersion = appVersion.split("-ruivza.")[0];
+  const [major, minor, patch] = baseVersion.split(".").map(Number);
+  const data = structuredClone(seed);
+  data.cloudProviders[0].models.push(
+    { id: "fork-current", name: "Current", description: "Fixture", minAppVersion: baseVersion },
+    {
+      id: "fork-future",
+      name: "Future",
+      description: "Fixture",
+      minAppVersion: `${major}.${minor}.${patch + 1}`,
+    }
+  );
+  return data;
+}
+
+function assertForkModels(snapshot) {
+  const ids = snapshot.data.cloudProviders[0].models.map((model) => model.id);
+  assert.ok(ids.includes("fork-current"));
+  assert.ok(!ids.includes("fork-future"));
+}
+
+test("the actual package version starts offline with same-version models and hides future models", async (t) => {
+  const x = setup(t, {
+    appVersion,
+    mode: "bundled",
+    bundledSnapshot: { data: forkVersionCatalog(), manifestVersion: 1 },
+  });
+  await x.loader.start();
+  await x.loader.refresh();
+  assertForkModels(x.loader.getSnapshot());
+  assert.equal(x.requests(), 0);
+  assert.equal(x.errors.length, 0);
+});
+
+test("the actual fork version uses the same model gates for signed offline cache and refresh", async (t) => {
+  const data = forkVersionCatalog();
+  const next = structuredClone(data);
+  next.cloudProviders[0].models.push({ id: "fork-refreshed", name: "New", description: "Fixture" });
+  let requests = 0;
+  const x = setup(t, {
+    appVersion,
+    bundledSnapshot: { data, manifestVersion: 1 },
+    fetch: async () => {
+      requests++;
+      return new Response(signed(3, next));
+    },
+  });
+  fs.writeFileSync(x.config.cachePath, signed(2, data));
+  await x.loader.start();
+  assert.equal(requests, 0);
+  assert.equal(x.loader.getSnapshot().manifestVersion, 2);
+  assertForkModels(x.loader.getSnapshot());
+
+  await x.loader.refresh();
+  assert.equal(requests, 1);
+  assert.equal(x.loader.getSnapshot().manifestVersion, 3);
+  assertForkModels(x.loader.getSnapshot());
+  assert.equal(x.loader.getSnapshot().data.cloudProviders[0].models.at(-1).id, "fork-refreshed");
+  assert.equal(fs.readFileSync(x.config.cachePath, "utf8"), signed(3, next));
+  assert.equal(x.errors.length, 0);
+});
+
+test("invalid fork suffixes remain rejected before cache or network startup", (t) => {
+  for (const version of [
+    "1.10.3-ruivza.0",
+    "1.10.3-ruivza.01",
+    "1.10.3-ruivza.2.extra",
+    "1.10.3-beta.2",
+    "1.10.3-ruivza.9007199254740992",
+  ]) {
+    assert.throws(() => setup(t, { appVersion: version }), { name: "ZodError" }, version);
+  }
+});
+
+test("a fork runtime does not relax signed catalog minimum-version validation", async (t) => {
+  const data = structuredClone(seed);
+  data.cloudProviders[0].models.push({
+    id: "invalid-minimum",
+    name: "Invalid",
+    description: "Fixture",
+    minAppVersion: appVersion,
+  });
+  const x = setup(t, { appVersion, fetch: async () => new Response(signed(2, data)) });
+  await x.loader.refresh();
+  assert.equal(x.loader.getSnapshot().manifestVersion, 1);
+  assert.equal(x.applied.length, 0);
+  assert.equal(x.errors[0].name, "ZodError");
 });

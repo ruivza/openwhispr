@@ -1,5 +1,6 @@
 const fs = require("node:fs/promises");
 const path = require("node:path");
+const { normalizeRegistryAppVersion } = require("../models/registryAppVersion.js");
 const { verifyEnvelope, MAX_ENVELOPE_BYTES } = require("../models/registryEnvelope.cjs");
 const {
   validateManifest,
@@ -60,6 +61,7 @@ function createRegistryLoader({
   intervalMs = 15 * 60 * 1000,
   timeoutMs = 15000,
 }) {
+  appVersion = normalizeRegistryAppVersion(appVersion);
   // Canonical data retains future-version entries; visible data is filtered.
   // Comparing a full publication against a filtered baseline would shift order.
   let snapshot = { ...bundledSnapshot, data: selectCatalog(bundledSnapshot.data, {}, appVersion) };
