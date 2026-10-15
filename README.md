@@ -92,19 +92,21 @@ GitHub needs no Azure signing credentials, Apple certificate, or notarization ke
 
 This follows the same `release-local.sh --run ... --publish` workflow as SpeechDock. Install GitHub CLI (`gh`), Python 3.9+, Xcode command-line tools, and your Developer ID Application certificate with its private key. Log in with `gh auth login`. Use an existing notarytool Keychain profile, or create one with `xcrun notarytool store-credentials openwhispr-release`. A profile such as `speechdock-release` can be reused for the same Apple account/team; its name is not tied to an application.
 
-1. Set `package.json` and the lockfile to the intended release version, commit and push the changes, then push a matching **new** `vX.Y.Z` tag. Existing tags/assets are never replaced.
+The fork follows the upstream version and appends its own revision: `1.10.3-ruivza.1`, `1.10.3-ruivza.2`, then `1.10.4-ruivza.1` after merging upstream `1.10.4`. The Windows app executable's file/product versions use the numeric form `1.10.3.1`. Keep the two Windows metadata values in `electron-builder.json` in sync with each revision. An existing `1.10.4` installation needs one manual install to move to `1.10.3-ruivza.1`; automatic downgrades stay disabled.
+
+1. Set `package.json`, the lockfile, and the Windows metadata to the intended release version, commit and push the changes, then push a matching **new** `vX.Y.Z-ruivza.N` tag. Existing tags/assets are never replaced.
 2. Wait for **Build tagged packages (unsigned)** to finish successfully and copy its Actions run ID.
 3. On your Mac, fetch and check out that exact tag, then run:
 
 ```bash
-git fetch origin tag vX.Y.Z
-git switch --detach vX.Y.Z
+git fetch origin tag vX.Y.Z-ruivza.N
+git switch --detach vX.Y.Z-ruivza.N
 NOTARY_PROFILE=speechdock-release bash scripts/release-local.sh --run RUN_ID --publish
 ```
 
 Use the run ID from **this OpenWhispr repository**, not an old SpeechDock run. The script verifies the remote tag, local commit, successful workflow, and artifact metadata. It signs Electron helpers, frameworks, native modules, and the app from the inside out using `resources/mac/entitlements.mac.plist`; then it notarizes and staples the app, creates and signs a DMG, notarizes/staples the DMG, and checks Gatekeeper. Both `arm64` and `x64` are processed by default. No app compilation runs locally. The release launcher (`scripts/release-local.sh`) may be updated from a reviewed later commit to fix download or publishing behavior without rebuilding the app. The checkout, signing helper, entitlements, and other build inputs must still match the release tag.
 
-Without `--publish`, signed DMGs stay in a new directory under `build/local-release.*/output`. Add `--arch arm64` or `--arch x64` to test just one Mac architecture locally. Publishing requires both architectures and adds the signed Mac DMGs and `SHA256SUMS-macos` to the version Release. GitHub automatically publishes Windows/Linux installers and `SHA256SUMS-windows-linux` after a successful tagged build; the Mac downloads only Mac artifacts. Either publisher can create the Release first, and neither overwrites existing assets. To publish Windows/Linux packages from an older successful tag build, run the **Publish Windows and Linux packages** workflow with its run ID. CI's old update manifests/blockmaps are not published; this flow distributes downloads and does not configure the app's automatic updater for the fork.
+Without `--publish`, signed DMGs stay in a new directory under `build/local-release.*/output`. Add `--arch arm64` or `--arch x64` to test just one Mac architecture locally. Publishing requires both architectures and adds the signed Mac packages and `SHA256SUMS-macos` to the version Release. GitHub automatically publishes Windows/Linux installers and `SHA256SUMS-windows-linux` after a successful tagged build; the Mac downloads only Mac artifacts. Either publisher can create the Release first, and neither overwrites existing assets. To publish Windows/Linux packages from an older successful tag build, run the **Publish Windows and Linux packages** workflow with its run ID. Fork revision releases use the `ruivza` update channel; the publishers generate its manifests from the final installer/ZIP bytes and upload metadata after the payloads. Fork revision tags are marked as GitHub prereleases.
 
 If several Developer ID certificates are installed, set `SIGNING_IDENTITY` to the exact certificate name or SHA-1 shown by `security find-identity -v -p codesigning`. `NOTARY_KEYCHAIN` optionally selects the Keychain containing the notary profile. Certificate private keys and notary credentials remain on the Mac.
 

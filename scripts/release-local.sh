@@ -19,7 +19,8 @@ GitHub publishes Windows/Linux packages separately. Existing assets are not repl
 Required: NOTARY_PROFILE, a notarytool profile in this Mac's Keychain.
 Optional: NOTARY_KEYCHAIN and SIGNING_IDENTITY (exact Developer ID name or SHA-1).
 Requires macOS, Python 3.9+, Xcode command-line tools, git, and gh.
-Check out the matching vX.Y.Z tag before running. No local app compilation is needed.
+Check out the matching vX.Y.Z-ruivza.N tag before running. Legacy stable tags also work.
+No local app compilation is needed.
 HELP
 }
 
@@ -57,7 +58,10 @@ done
 python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else "Python 3.9+ is required")'
 
 VERSION=$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')
-[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Error: expected a stable X.Y.Z package version." >&2; exit 1; }
+# [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Error: expected a stable X.Y.Z package version." >&2; exit 1; }
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-ruivza\.[1-9][0-9]*)?$ ]] || {
+    echo "Error: expected X.Y.Z-ruivza.N or a legacy stable X.Y.Z package version." >&2; exit 1;
+}
 TAG="v$VERSION"
 COMMIT=$(git rev-parse "refs/tags/$TAG^{commit}")
 [[ "$(git rev-parse HEAD)" = "$COMMIT" ]] || { echo "Error: check out $TAG before signing." >&2; exit 1; }
@@ -165,8 +169,11 @@ if [ "$PUBLISH" = true ]; then
     echo "Publishing signed macOS packages and update metadata to $REPOSITORY ($TAG)..."
     if ! gh release view "$TAG" --repo "$REPOSITORY" >/dev/null 2>&1; then
         # The CI publisher may create the Release concurrently.
-        gh release create "$TAG" --repo "$REPOSITORY" --verify-tag \
-            --title "OpenWhispr $VERSION" --generate-notes || \
+        # gh release create "$TAG" --repo "$REPOSITORY" --verify-tag \
+        #     --title "OpenWhispr $VERSION" --generate-notes || \
+        RELEASE_ARGS=(--title "OpenWhispr $VERSION" --generate-notes)
+        if [[ "$VERSION" == *-ruivza.* ]]; then RELEASE_ARGS+=(--prerelease); fi
+        gh release create "$TAG" --repo "$REPOSITORY" --verify-tag "${RELEASE_ARGS[@]}" || \
             gh release view "$TAG" --repo "$REPOSITORY" >/dev/null
     fi
     # gh release upload "$TAG" "$WORK_DIR/output/"* --repo "$REPOSITORY"

@@ -151,6 +151,16 @@ class SigningTests(unittest.TestCase):
 
 
 class UpdateManifestTests(unittest.TestCase):
+    def test_fork_revision_keeps_channels_separate_for_both_architectures(self):
+        with tempfile.TemporaryDirectory() as temp:
+            version = "1.10.3-ruivza.1"
+            for arch in ("arm64", "x64"):
+                archive = Path(temp) / f"OpenWhispr-{version}-mac-{arch}.zip"
+                archive.write_bytes(b"signed app")
+                manifest = release.write_update_manifest(archive, version, arch)
+                self.assertEqual(manifest.name, f"ruivza-{arch}-mac.yml")
+                self.assertEqual(json.loads(manifest.read_text())["version"], version)
+
     def test_each_architecture_describes_the_final_zip_bytes(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

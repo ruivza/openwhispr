@@ -192,7 +192,9 @@ def write_update_manifest(archive, version, arch):
             "files": [{"url": archive.name, "sha512": checksum, "size": archive.stat().st_size}],
             "path": archive.name, "sha512": checksum}
     # JSON is valid YAML; this requires no extra runtime on the signing Mac.
-    manifest = archive.with_name(f"latest-{arch}-mac.yml")
+    # manifest = archive.with_name(f"latest-{arch}-mac.yml")
+    channel = "ruivza" if "-ruivza." in version else "latest"
+    manifest = archive.with_name(f"{channel}-{arch}-mac.yml")
     manifest.write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
     return manifest
 

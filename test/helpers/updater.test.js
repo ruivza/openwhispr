@@ -2,12 +2,14 @@ const test = require("node:test");
 const { afterEach, beforeEach } = require("node:test");
 const assert = require("node:assert/strict");
 const Module = require("node:module");
+const semver = Module.createRequire(require.resolve("electron-updater/package.json"))("semver");
 
 process.env.NODE_ENV = "test";
 
 const updaterModulePath = require.resolve("../../src/updater.js");
 const originalLoad = Module._load;
 const originalPlatform = process.platform;
+const originalArch = process.arch;
 const originalAppImage = process.env.APPIMAGE;
 
 const STARTUP_DELAY_MS = 3000;
@@ -15,12 +17,22 @@ const PERIODIC_INTERVAL_MS = 4 * 60 * 60 * 1000;
 
 function makeAutoUpdater({ offline = false } = {}) {
   const listeners = {};
+  let channel = null;
   const autoUpdater = {
     calls: 0,
     downloads: 0,
     installs: [],
     listeners,
     feeds: [],
+    currentVersion: semver.parse("1.10.3-ruivza.1"),
+    get channel() {
+      return channel;
+    },
+    set channel(value) {
+      channel = value;
+      // Match the real updater setter so setup must explicitly disable this.
+      autoUpdater.allowDowngrade = true;
+    },
     setFeedURL(feed) {
       autoUpdater.feeds.push(feed);
     },
@@ -51,12 +63,12 @@ function makeAutoUpdater({ offline = false } = {}) {
 
 // updater.js requires electron and child_process lazily (constructor, cleanup(),
 // Rosetta probe), so the mocks stay installed until afterEach.
-function createUpdateManager(autoUpdater) {
+function createUpdateManager(autoUpdater, { translated = "0" } = {}) {
   delete require.cache[updaterModulePath];
   Module._load = function loadWithMocks(request, parent, isMain) {
     if (request === "electron-updater") return { autoUpdater };
     if (request === "electron") return { autoUpdater: { on() {}, removeListener() {} } };
-    if (request === "child_process") return { execSync: () => "0" };
+    if (request === "child_process") return { execSync: () => translated };
     return originalLoad.call(this, request, parent, isMain);
   };
   const UpdateManager = require(updaterModulePath);
@@ -78,6 +90,10 @@ function setPlatform(platform) {
   Object.defineProperty(process, "platform", { value: platform, configurable: true });
 }
 
+function setArch(arch) {
+  Object.defineProperty(process, "arch", { value: arch, configurable: true });
+}
+
 beforeEach((t) => {
   t.mock.method(console, "log", () => {});
   t.mock.method(console, "error", () => {});
@@ -89,6 +105,7 @@ beforeEach((t) => {
 afterEach(() => {
   Module._load = originalLoad;
   setPlatform(originalPlatform);
+  setArch(originalArch);
   if (originalAppImage === undefined) delete process.env.APPIMAGE;
   else process.env.APPIMAGE = originalAppImage;
 });
@@ -114,12 +131,132 @@ test("startup and periodic checks run whether or not automatic updates are on", 
 test("runtime and packaged update sources point only at this fork", () => {
   const autoUpdater = makeAutoUpdater();
   const manager = createUpdateManager(autoUpdater);
-  const expected = { provider: "github", owner: "ruivza", repo: "openwhispr", private: false };
-  assert.deepEqual(autoUpdater.feeds, [expected]);
+  const expected = {
+    provider: "github",
+    owner: "ruivza",
+    repo: "openwhispr",
+    private: false,
+    channel: "ruivza",
+  };
+  const [{ updateProvider, macUpdateArch, provider, ...runtimeFeed }] = autoUpdater.feeds;
+  assert.equal(provider, "custom");
+  assert.equal(typeof updateProvider, "function");
+  assert.equal(macUpdateArch, process.arch);
+  assert.deepEqual({ provider: "github", ...runtimeFeed }, expected);
   const { releaseType, ...packagedFeed } = require("../../electron-builder.json").publish;
   assert.deepEqual(packagedFeed, expected);
   assert.equal(releaseType, "draft");
+  assert.equal(autoUpdater.channel, "ruivza");
+  assert.equal(autoUpdater.allowPrerelease, true);
+  assert.equal(autoUpdater.allowDowngrade, false);
   manager.cleanup();
+});
+
+test("the real GitHub provider selects fork tags and platform-specific metadata", async () => {
+  const scenarios = [
+    { platform: "darwin", arch: "arm64", file: "ruivza-arm64-mac.yml" },
+    { platform: "darwin", arch: "x64", file: "ruivza-x64-mac.yml" },
+    { platform: "darwin", arch: "x64", translated: "1", file: "ruivza-arm64-mac.yml" },
+    { platform: "win32", arch: "x64", file: "ruivza.yml" },
+    { platform: "linux", arch: "x64", file: "ruivza-linux.yml" },
+    { platform: "linux", arch: "arm64", file: "ruivza-linux-arm64.yml" },
+  ];
+  const version = "1.10.3-ruivza.10";
+  const tags = ["v1.10.4", "v1.10.3-beta.99", `v${version}`, "v1.10.3-ruivza.2"];
+  const feedXml = `<feed>${tags
+    .map(
+      (tag) =>
+        `<entry><title>${tag}</title><link href="https://github.com/ruivza/openwhispr/releases/tag/${tag}"/><content>Fixture release</content></entry>`
+    )
+    .join("")}</feed>`;
+  for (const scenario of scenarios) {
+    setPlatform(scenario.platform);
+    setArch(scenario.arch);
+    const autoUpdater = makeAutoUpdater();
+    const manager = createUpdateManager(autoUpdater, scenario);
+    const requests = [];
+    const options = autoUpdater.feeds[0];
+    const { createClient } = require("electron-updater/out/providerFactory");
+    const provider = createClient(options, autoUpdater, {
+      platform: scenario.platform,
+      executor: {
+        async request(request) {
+          requests.push({ hostname: request.hostname, path: request.path });
+          if (request.path.endsWith(".atom")) return feedXml;
+          return JSON.stringify({
+            version,
+            files: [{ url: "fixture.zip", sha512: "fixture", size: 1 }],
+          });
+        },
+      },
+    });
+    const result = await provider.getLatestVersion();
+    assert.equal(result.tag, `v${version}`);
+    assert.equal(result.version, version);
+    assert.deepEqual(requests, [
+      { hostname: "github.com", path: "/ruivza/openwhispr/releases.atom" },
+      {
+        hostname: "github.com",
+        path: `/ruivza/openwhispr/releases/download/v${version}/${scenario.file}`,
+      },
+    ]);
+    assert.equal(autoUpdater.allowDowngrade, false);
+    manager.cleanup();
+  }
+});
+
+test("the real updater uses SemVer revisions and never downgrades the old fork version", async () => {
+  const { AppUpdater } = require("electron-updater/out/AppUpdater");
+  const autoUpdater = makeAutoUpdater();
+  const manager = createUpdateManager(autoUpdater);
+  const updater = {
+    currentVersion: autoUpdater.currentVersion,
+    allowDowngrade: autoUpdater.allowDowngrade,
+    isUpdateSupported: () => true,
+    isUserWithinRollout: () => true,
+  };
+  for (const [version, expected] of [
+    ["1.10.3-ruivza.1", false],
+    ["1.10.3-ruivza.2", true],
+    ["1.10.3-ruivza.10", true],
+    ["1.10.4-ruivza.1", true],
+  ]) {
+    assert.equal(await AppUpdater.prototype.isUpdateAvailable.call(updater, { version }), expected);
+  }
+  updater.currentVersion = semver.parse("1.10.3-ruivza.10");
+  assert.equal(
+    await AppUpdater.prototype.isUpdateAvailable.call(updater, { version: "1.10.3-ruivza.2" }),
+    false
+  );
+  updater.currentVersion = semver.parse("1.10.4");
+  assert.equal(
+    await AppUpdater.prototype.isUpdateAvailable.call(updater, { version: "1.10.3-ruivza.1" }),
+    false
+  );
+  manager.cleanup();
+});
+
+test("builder accepts fork metadata and keeps numeric Windows versions out of macOS buildVersion", async () => {
+  const config = require("../../electron-builder.json");
+  const metadata = require("../../package.json");
+  const lock = require("../../package-lock.json");
+  const { validateConfiguration } = require("app-builder-lib/out/util/config/config");
+  const { AppInfo } = require("app-builder-lib/out/appInfo");
+  await validateConfiguration(config, { isEnabled: false });
+  const version = semver.parse(metadata.version);
+  assert.equal(version.prerelease.length, 2);
+  assert.equal(version.prerelease[0], "ruivza");
+  assert.equal(Number.isInteger(version.prerelease[1]), true);
+  assert.ok(version.prerelease[1] > 0);
+  assert.equal(lock.version, metadata.version);
+  assert.equal(lock.packages[""].version, metadata.version);
+  const info = new AppInfo({ metadata: { ...metadata, ...config.extraMetadata }, config });
+  assert.equal(info.channel, "ruivza");
+  const windowsVersion = `${version.major}.${version.minor}.${version.patch}.${version.prerelease[1]}`;
+  assert.equal(info.shortVersion, windowsVersion);
+  assert.equal(info.shortVersionWindows, windowsVersion);
+  assert.equal(config.buildVersion, undefined);
+  assert.equal(info.buildVersion, metadata.version);
 });
 
 test("manual checks, download and installation remain available with automatic updates off", async () => {

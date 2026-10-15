@@ -1,4 +1,20 @@
 const { autoUpdater } = require("electron-updater");
+const { GitHubProvider } = require("electron-updater/out/providers/GitHubProvider");
+
+const FORK_UPDATE_CHANNEL = "ruivza";
+
+// Keep GitHub release selection and SemVer comparison in electron-updater.
+// Its prerelease path derives the metadata channel from the tag, so macOS
+// architecture belongs in the filename only, never in the release channel.
+class ForkGitHubProvider extends GitHubProvider {
+  getCustomChannelName(channel) {
+    const name =
+      this.runtimeOptions.platform === "darwin"
+        ? `${channel}-${this.options.macUpdateArch}`
+        : channel;
+    return super.getCustomChannelName(name);
+  }
+}
 
 // electron-updater can only replace an AppImage on Linux; deb, rpm and tar.gz
 // installs are updated by the package manager instead.
@@ -34,21 +50,15 @@ class UpdateManager {
     // Upstream feed (also the original electron-builder.json publish value):
     // autoUpdater.setFeedURL({ provider: "github", owner: "OpenWhispr", repo: "openwhispr", private: false });
     // A fork must never fall back to upstream: that would replace local changes.
-    autoUpdater.setFeedURL({
-      provider: "github",
-      owner: "ruivza",
-      repo: "openwhispr",
-      private: false,
-    });
+    // Previous stable fork feed:
+    // autoUpdater.setFeedURL({ provider: "github", owner: "ruivza", repo: "openwhispr", private: false });
 
     // Use arch-specific update channel on macOS to prevent arm64/x64
     // from downloading mismatched artifacts. Both builds publish to the
-    // same GitHub release, so without this they race on latest-mac.yml.
-    // Setting channel to e.g. 'latest-arm64' makes the updater look for
-    // 'latest-arm64-mac.yml' instead of the shared 'latest-mac.yml'.
+    // same GitHub release, so without this they race on the shared metadata.
+    // The provider requests ruivza-arm64-mac.yml or ruivza-x64-mac.yml.
+    let nativeArch = process.arch;
     if (process.platform === "darwin") {
-      let nativeArch = process.arch;
-
       // Detect Rosetta: if an x64 build is running on Apple Silicon,
       // sysctl.proc_translated returns "1". This self-heals users who
       // got stuck on the x64 build from older releases.
@@ -68,8 +78,23 @@ class UpdateManager {
         }
       }
 
-      autoUpdater.channel = nativeArch === "arm64" ? "latest-arm64" : "latest-x64";
+      // autoUpdater.channel = nativeArch === "arm64" ? "latest-arm64" : "latest-x64";
     }
+
+    autoUpdater.setFeedURL({
+      provider: "custom",
+      updateProvider: ForkGitHubProvider,
+      owner: "ruivza",
+      repo: "openwhispr",
+      private: false,
+      channel: FORK_UPDATE_CHANNEL,
+      macUpdateArch: nativeArch,
+    });
+    autoUpdater.channel = FORK_UPDATE_CHANNEL;
+    autoUpdater.allowPrerelease = true;
+    // The channel setter enables downgrades by default; keep SemVer upgrades only.
+    // Existing 1.10.4 installs need a manual install of the corrected fork baseline.
+    autoUpdater.allowDowngrade = false;
 
     autoUpdater.autoDownload = false;
     autoUpdater.autoInstallOnAppQuit = true;

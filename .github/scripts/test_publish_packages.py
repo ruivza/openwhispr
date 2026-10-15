@@ -19,6 +19,12 @@ class PublishingTests(unittest.TestCase):
                    repository={"full_name": "ruivza/openwhispr"},
                    head_repository={"full_name": "ruivza/openwhispr"}, head_sha="a" * 40)
         self.assertEqual(publisher.validate_run(run, "ruivza/openwhispr", "a" * 40), "v1.10.4")
+        for tag in ("v1.10.3-ruivza.1", "v1.10.3-ruivza.2", "v1.10.4-ruivza.1"):
+            with self.subTest(tag=tag):
+                self.assertEqual(publisher.validate_run({**run, "head_branch": tag}, "ruivza/openwhispr", "a" * 40), tag)
+        for tag in ("v1.10.3.1", "v1.10.3-beta.1", "v1.10.3-ruivza", "v1.10.3-ruivza.0"):
+            with self.subTest(tag=tag), self.assertRaises(ValueError):
+                publisher.validate_run({**run, "head_branch": tag}, "ruivza/openwhispr", "a" * 40)
         for key, value in (("head_branch", "main"), ("conclusion", "failure"), ("event", "pull_request"),
                            ("head_sha", "b" * 40), ("path", ".github/workflows/other.yml"),
                            ("head_repository", {"full_name": "someone/fork"})):
@@ -97,6 +103,28 @@ class PublishingTests(unittest.TestCase):
                     package.write_bytes(b"payload")
                 with self.subTest(names=names), self.assertRaisesRegex(ValueError, "Exactly one"):
                     publisher.update_manifests(packages, "1.10.4", root)
+
+    def test_fork_revision_metadata_uses_its_own_channel(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            version = "1.10.3-ruivza.1"
+            packages = [root / f"OpenWhispr-{version}.exe", root / f"OpenWhispr-{version}.AppImage"]
+            for package in packages:
+                package.write_bytes(b"payload")
+            manifests = publisher.update_manifests(packages, version, root)
+            self.assertEqual({p.name for p in manifests}, {"ruivza.yml", "ruivza-linux.yml"})
+            for manifest in manifests:
+                self.assertEqual(json.loads(manifest.read_text())["version"], version)
+
+    def test_only_fork_revision_releases_are_created_as_prereleases(self):
+        for tag in ("v1.10.4", "v1.10.3-ruivza.1"):
+            with self.subTest(tag=tag), \
+                    patch.object(publisher, "release_info", side_effect=[None, {"assets": []}]), \
+                    patch.object(publisher, "gh") as gh:
+                publisher.upload_packages("ruivza/openwhispr", tag, [])
+                arguments = gh.call_args.args
+                self.assertEqual(arguments[:3], ("release", "create", tag))
+                self.assertEqual("--prerelease" in arguments, "-ruivza." in tag)
 
     def test_upstream_or_other_repositories_are_rejected_without_network_calls(self):
         with patch.object(publisher, "gh") as gh:

@@ -10905,9 +10905,7 @@ class IPCHandlers {
       return this.updateManager.getAppVersion();
     });
 
-    ipcMain.handle("get-local-mcp-config", () =>
-      getLocalMcpConfig({ appPath: app.getAppPath() })
-    );
+    ipcMain.handle("get-local-mcp-config", () => getLocalMcpConfig({ appPath: app.getAppPath() }));
 
     ipcMain.handle("get-post-migration-state", () => ({
       justMigrated: postMigrationDetector.isReturningFromOldBundle(),

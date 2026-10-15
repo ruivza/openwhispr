@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to build (e.g., 1.10.3); signing is performed locally"
+        description: "Version to build (e.g., 1.10.3-ruivza.1); signing is performed locally"
         required: true
         type: string
 

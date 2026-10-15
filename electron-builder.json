@@ -2,7 +2,9 @@
   "appId": "com.gizmolabs.openwhispr",
   "afterPack": "scripts/afterPack.js",
   "extraMetadata": {
-    "windowsTrayIdentity": true
+    "windowsTrayIdentity": true,
+    "shortVersion": "1.10.3.1",
+    "shortVersionWindows": "1.10.3.1"
   },
   "productName": "OpenWhispr",
   "protocols": {
@@ -280,6 +282,7 @@
     "owner": "ruivza",
     "repo": "openwhispr",
     "private": false,
+    "channel": "ruivza",
     "releaseType": "draft"
   }
 }

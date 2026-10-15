@@ -12,6 +12,7 @@ import tempfile
 
 
 RELEASE_REPOSITORY = "ruivza/openwhispr"
+VERSION_TAG_PATTERN = r"v\d+\.\d+\.\d+(?:-ruivza\.[1-9]\d*)?"
 
 
 def gh(*args):
@@ -24,8 +25,10 @@ def api(path):
 
 def validate_run(run, repository, tag_commit):
     tag = run.get("head_branch", "")
-    if not re.fullmatch(r"v\d+\.\d+\.\d+", tag):
-        raise ValueError("Only stable version tags can be published")
+    # if not re.fullmatch(r"v\d+\.\d+\.\d+", tag):
+    #     raise ValueError("Only stable version tags can be published")
+    if not re.fullmatch(VERSION_TAG_PATTERN, tag):
+        raise ValueError("Only stable or ruivza revision tags can be published")
     if (run.get("status"), run.get("conclusion"), run.get("event")) != ("completed", "success", "push"):
         raise ValueError("A successful tag-push build is required")
     if run.get("name") != "Build tagged packages (unsigned)" or run.get("path") != ".github/workflows/release.yml":
@@ -83,7 +86,9 @@ def update_manifests(packages, version, destination):
     SHA256SUMS is for manual verification; the updater consumes these SHA512s.
     """
     manifests = []
-    for ending, channel in ((".exe", "latest.yml"), (".AppImage", "latest-linux.yml")):
+    # for ending, channel in ((".exe", "latest.yml"), (".AppImage", "latest-linux.yml")):
+    channel = "ruivza" if "-ruivza." in version else "latest"
+    for ending, suffix in ((".exe", ""), (".AppImage", "-linux")):
         installers = [p for p in packages if p.name.endswith(ending)]
         if len(installers) != 1:
             raise ValueError("Exactly one current-architecture " + ending + " update is required")
@@ -105,7 +110,7 @@ def update_manifests(packages, version, destination):
         info = {"version": version,
                 "files": [file_info],
                 "path": package.name, "sha512": checksum}
-        path = destination / channel
+        path = destination / f"{channel}{suffix}.yml"
         path.write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
         manifests.append(path)
     return manifests
@@ -125,8 +130,13 @@ def upload_packages(repository, tag, packages):
     release = release_info(repository, tag)
     if release is None:
         try:
-            gh("release", "create", tag, "--repo", repository, "--verify-tag",
-               "--title", "OpenWhispr " + tag[1:], "--generate-notes")
+            # gh("release", "create", tag, "--repo", repository, "--verify-tag",
+            #    "--title", "OpenWhispr " + tag[1:], "--generate-notes")
+            arguments = ["release", "create", tag, "--repo", repository, "--verify-tag",
+                         "--title", "OpenWhispr " + tag[1:], "--generate-notes"]
+            if "-ruivza." in tag:
+                arguments.append("--prerelease")
+            gh(*arguments)
         except subprocess.CalledProcessError:
             # The Mac publisher may have created this Release concurrently.
             if release_info(repository, tag) is None:
@@ -165,7 +175,8 @@ def main():
         raise ValueError("Invalid repository or build ID")
     run = api(f"repos/{repository}/actions/runs/{run_id}")
     candidate = run.get("head_branch", "")
-    if not re.fullmatch(r"v\d+\.\d+\.\d+", candidate):
+    # if not re.fullmatch(r"v\d+\.\d+\.\d+", candidate):
+    if not re.fullmatch(VERSION_TAG_PATTERN, candidate):
         raise ValueError("Build does not belong to a version tag")
     commit = api(f"repos/{repository}/commits/{candidate}")["sha"]
     tag = validate_run(run, repository, commit)
