@@ -26,7 +26,8 @@ jobs:
     timeout-minutes: 120
     env:
       OPENWHISPR_IOS_BUNDLE_IDENTIFIER: ${{ inputs.bundle_identifier }}
-      IOS_UNSIGNED_OUTPUT_DIR: ${{ runner.temp }}/ios-unsigned
+      # runner.temp is available in step env, not job env.
+      # IOS_UNSIGNED_OUTPUT_DIR: ${{ runner.temp }}/ios-unsigned
     defaults:
       run:
         shell: bash
@@ -79,6 +80,8 @@ jobs:
       # packaging. No Apple account, signing certificate or EAS login is used.
       - name: Build unsigned archive and IPA
         working-directory: .
+        env:
+          IOS_UNSIGNED_OUTPUT_DIR: ${{ runner.temp }}/ios-unsigned
         run: bash scripts/build-ios-unsigned.sh --output-dir "$IOS_UNSIGNED_OUTPUT_DIR"
 
       - name: Upload unsigned app and signing metadata
