@@ -133,35 +133,62 @@ test("a surface that doesn't opt in (container chat) never offers them", async (
   assert.equal(offersConnectors(offeredTools[0]), false);
 });
 
-test("a signed-out chat never offers them", async (t) => {
-  const { captured, offeredTools } = await renderChatStreaming(t, CONNECTOR_SURFACE, {
-    settings: { ...BYOK_SETTINGS, isSignedIn: false },
-  });
+test("a signed-out BYOK chat offers local connector tools", async (t) => {
+  const { captured, offeredTools, reasoningService } = await renderChatStreaming(
+    t,
+    CONNECTOR_SURFACE,
+    {
+      settings: { ...BYOK_SETTINGS, isSignedIn: false },
+    }
+  );
   await captured.sendToAI("Email Josh", []);
   assert.ok(offeredTools[0].length > 0);
-  assert.equal(offersConnectors(offeredTools[0]), false);
+  // Official account gate: assert.equal(offersConnectors(offeredTools[0]), false);
+  assert.ok(offeredTools[0].includes("email_draft"));
+  assert.ok(offeredTools[0].includes("find_contact"));
+  assert.equal(reasoningService.processTextStreamingAI.mock.callCount(), 1);
+  assert.equal(reasoningService.processTextStreamingCloud.mock.callCount(), 0);
 });
 
-test("a free plan never offers them", async (t) => {
-  const { captured, offeredTools } = await renderChatStreaming(t, CONNECTOR_SURFACE, {
-    subscribed: false,
-  });
+test("a signed-out local model without a subscription offers local connector tools", async (t) => {
+  const { captured, offeredTools, reasoningService } = await renderChatStreaming(
+    t,
+    CONNECTOR_SURFACE,
+    {
+      settings: {
+        chatAgentMode: "local",
+        chatAgentProvider: "qwen",
+        chatAgentModel: "qwen3-4b-q4_k_m",
+        isSignedIn: false,
+      },
+      subscribed: false,
+    }
+  );
   await captured.sendToAI("Email Josh", []);
   assert.ok(offeredTools[0].length > 0);
-  assert.equal(offersConnectors(offeredTools[0]), false);
+  // Official subscription gate: assert.equal(offersConnectors(offeredTools[0]), false);
+  assert.ok(offeredTools[0].includes("email_draft"));
+  assert.ok(offeredTools[0].includes("find_contact"));
+  assert.equal(reasoningService.processTextStreamingAI.mock.callCount(), 1);
+  assert.equal(reasoningService.processTextStreamingCloud.mock.callCount(), 0);
 });
 
 test("an org that turns connectors off mid-session removes them from the next send", async (t) => {
   const { captured, offeredTools, usePolicyStore } = await renderChatStreaming(
     t,
-    CONNECTOR_SURFACE
+    CONNECTOR_SURFACE,
+    { settings: { ...BYOK_SETTINGS, isSignedIn: false }, subscribed: false }
   );
-  usePolicyStore.setState({ status: "managed", appVersion: "1.10.0", policy: MANAGED_POLICY });
+  const policy = {
+    ...MANAGED_POLICY,
+    llm: { ...MANAGED_POLICY.llm, allowedModes: ["providers"], allowedByokProviders: ["openai"] },
+  };
+  usePolicyStore.setState({ status: "managed", appVersion: "1.10.0", policy });
   await captured.sendToAI("Email Josh", []);
   usePolicyStore.setState({
     policy: {
-      ...MANAGED_POLICY,
-      features: { ...MANAGED_POLICY.features, connectorsEnabled: false },
+      ...policy,
+      features: { ...policy.features, connectorsEnabled: false },
     },
   });
   await captured.sendToAI("Email Josh again", []);
@@ -584,7 +611,7 @@ const NOTE_MEETING = {
 async function renderNoteChat(
   t,
   hookOptions,
-  { answer, subscribed = true, electronAPI = {} } = {}
+  { answer, subscribed = true, electronAPI = {}, settings = {} } = {}
 ) {
   const lookups = [];
   const rendered = await renderChatStreaming(
@@ -592,6 +619,7 @@ async function renderNoteChat(
     { openNote: "Note ID: 7\nTitle: Kickoff", noteMeeting: NOTE_MEETING, ...hookOptions },
     {
       subscribed,
+      settings,
       electronAPI: {
         ...electronAPI,
         connectorNoteAttendees: async (request) => {
@@ -657,14 +685,21 @@ test("a chat that offers no connector tools never looks up or lists attendees", 
   assert.match(prompts[0], /Title: Kickoff/, "the note itself is still there");
 });
 
-test("a free plan's note chat never looks up or lists attendees", async (t) => {
-  const { captured, lookups, prompts } = await renderNoteChat(t, CONNECTOR_SURFACE, {
+test("a signed-out BYOK note chat without a subscription still looks up and lists attendees", async (t) => {
+  const { captured, lookups, sentMessages } = await renderNoteChat(t, CONNECTOR_SURFACE, {
+    settings: { ...BYOK_SETTINGS, isSignedIn: false },
     subscribed: false,
   });
   await captured.sendToAI("Draft a follow-up to everyone", []);
 
-  assert.deepEqual(lookups, []);
-  assert.doesNotMatch(prompts[0], /Meeting attendees/);
+  // Official subscription gate:
+  // assert.deepEqual(lookups, []);
+  // assert.doesNotMatch(prompts[0], /Meeting attendees/);
+  assert.deepEqual(lookups, [NOTE_MEETING]);
+  assert.match(
+    systemPromptOf(sentMessages[0]),
+    /<meeting_attendees>\n- Dana Wu <dana@example\.com>\n<\/meeting_attendees>/
+  );
 });
 
 test("a chat that isn't about a note never looks up attendees", async (t) => {
@@ -861,33 +896,36 @@ test("an earlier turn's tool use reaches the model as a note on that answer", as
   ]);
 });
 
-test("signed out, the model is told to point the user at signing in", async (t) => {
+test("signed-out BYOK explains absent hosted search without requiring an official account", async (t) => {
   const { captured, sentMessages } = await renderChatStreaming(t, CONNECTOR_SURFACE, {
     settings: { ...BYOK_SETTINGS, isSignedIn: false },
   });
   await captured.sendToAI("What's new in AI today?", []);
   const prompt = systemPromptOf(sentMessages[0]);
+  // Official account gate:
+  // assert.match(prompt, /- Web search: needs the user to sign in to OpenWhispr in Settings → Profile\./);
+  // assert.match(prompt, /- Integrations \(Email, Slack, Linear, GitHub\): needs the user to sign in/);
   assert.match(
     prompt,
-    /- Web search: needs the user to sign in to OpenWhispr in Settings → Profile\./
+    /- Web search: not configured; this build needs the user's own service configuration\./
   );
-  assert.match(
-    prompt,
-    /- Integrations \(Email, Slack, Linear, GitHub\): needs the user to sign in/
-  );
+  assert.doesNotMatch(prompt, /needs the user to sign in|paid OpenWhispr plan|Plans & Billing/);
+  assert.doesNotMatch(prompt, /- Integrations \(Email, Slack, Linear, GitHub\):/);
 });
 
-test("on a free plan, the model still writes the email and then says a paid plan can send it", async (t) => {
-  const { captured, sentMessages } = await renderChatStreaming(t, CONNECTOR_SURFACE, {
+test("without a subscription, BYOK offers email tools without a paid plan instruction", async (t) => {
+  const { captured, sentMessages, offeredTools } = await renderChatStreaming(t, CONNECTOR_SURFACE, {
+    settings: { ...BYOK_SETTINGS, isSignedIn: false },
     subscribed: false,
   });
   await captured.sendToAI("Email Josh", []);
   const prompt = systemPromptOf(sentMessages[0]);
-  assert.match(
-    prompt,
-    /still write it in full in your reply, then end with one short sentence on how they can have you send it for them[^\n]*\n- Integrations \(Email, Slack, Linear, GitHub\): needs a paid OpenWhispr plan in Settings → Plans & Billing\./
-  );
-  assert.doesNotMatch(prompt, /- Web search: (needs|turned|not)/);
+  // Official subscription gate:
+  // assert.match(prompt, /still write it in full in your reply, then end with one short sentence on how they can have you send it for them[^\n]*\n- Integrations \(Email, Slack, Linear, GitHub\): needs a paid OpenWhispr plan in Settings → Plans & Billing\./);
+  // assert.doesNotMatch(prompt, /- Web search: (needs|turned|not)/);
+  assert.ok(offeredTools[0].includes("email_draft"));
+  assert.doesNotMatch(prompt, /needs the user to sign in|paid OpenWhispr plan|Plans & Billing/);
+  assert.match(prompt, /- Web search: not configured/);
 });
 
 test("an org that turns web search off is named as the reason", async (t) => {
@@ -948,7 +986,9 @@ test("a local model too small for tools is told so, with no tool notes in its hi
       chatAgentMode: "local",
       chatAgentProvider: "qwen",
       chatAgentModel: "qwen3-1.7b-q4_k_m",
+      isSignedIn: false,
     },
+    subscribed: false,
   });
   const earlier = [
     { id: "u1", role: "user", content: "Weather in Lisbon?" },

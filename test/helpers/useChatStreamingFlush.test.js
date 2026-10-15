@@ -70,7 +70,7 @@ async function renderChatStreaming(
     await unmount?.();
     t.mock.timers.reset();
   });
-  installBrowserGlobals(t, { window: { electronAPI } });
+  installBrowserGlobals(t, { initialStorage: { uiLanguage: "en" }, window: { electronAPI } });
   const container = live ? installHookDom(t) : null;
   const vite = await createRendererServer(t, {
     cachePrefix: "openwhispr-chat-streaming-flush-test-",

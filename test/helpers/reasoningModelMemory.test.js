@@ -132,10 +132,18 @@ test("retired cloud model selections are repointed to the provider default", asy
   installBrowserGlobals(t, {
     initialStorage: {
       _llmScopeKeysMigrated: "1",
+      // The original fixture omitted modes and implicitly selected official Cloud.
+      // Keep its model expectations below, but persist the user's real BYOK routes.
+      cleanupMode: "providers",
+      cleanupCloudMode: "byok",
       cleanupProvider: "groq",
       cleanupModel: "meta-llama/llama-4-scout-17b-16e-instruct",
+      chatAgentMode: "providers",
+      chatAgentCloudMode: "byok",
       chatAgentProvider: "openai",
       chatAgentModel: "gpt-5.2",
+      noteFormattingMode: "providers",
+      noteFormattingCloudMode: "byok",
       noteFormattingProvider: "custom",
       noteFormattingModel: "my-endpoint-model",
     },
@@ -150,6 +158,11 @@ test("retired cloud model selections are repointed to the provider default", asy
   reconcileRetiredCloudModelSelections();
 
   const state = useSettingsStore.getState();
+  assert.equal(state.transcriptionMode, "local", "the fork's STT default remains local");
+  for (const prefix of ["cleanup", "chatAgent", "noteFormatting"]) {
+    assert.equal(state[`${prefix}Mode`], "providers");
+    assert.equal(state[`${prefix}CloudMode`], "byok");
+  }
   assert.notEqual(
     state.cleanupModel,
     "meta-llama/llama-4-scout-17b-16e-instruct",

@@ -511,16 +511,27 @@ test("canSync gating: sign-out blocks every call; plan and backup gates protect 
   );
 });
 
-test("retention opt-out still drains analytics deletes without uploading counters", async (t) => {
+// Original: retention opt-out still drains analytics deletes without uploading counters.
+test("retention opt-out keeps analytics local while ordinary notes still sync", async (t) => {
   const ctx = await setup(t);
   if (!ctx) return;
-  const { api, service } = ctx;
+  const { db, api, service } = ctx;
+  const note = db.saveNote("Private note", "ordinary backup body", "personal").note;
+  db.recordAnalyticsEvent({
+    eventId: "local-counter",
+    wordCount: 4,
+    occurredAt: "2026-07-20T10:00:00.000Z",
+    localDate: "2026-07-20",
+    mode: "local",
+  });
+  const countersBefore = db.getAnalyticsSummary();
   localStorageStub.setItem("insightsSyncEnabled", "true");
   localStorageStub.setItem("dataRetentionEnabled", "false");
 
   let deleteReads = 0;
   let localDeletes = 0;
   let uploadReads = 0;
+  let analyticsRequests = 0;
   api.getPendingAnalyticsDeletes = async () =>
     deleteReads++ === 0 ? [{ event_id: "deleted-event" }] : [];
   api.hardDeleteAnalyticsEvents = async (eventIds) => {
@@ -534,6 +545,7 @@ test("retention opt-out still drains analytics deletes without uploading counter
   api.markAnalyticsEventsSynced = async () => ({ success: true, updated: 0 });
   const request = api.cloudApiRequest;
   api.cloudApiRequest = async (options) => {
+    if (options.path.startsWith("/api/analytics/")) analyticsRequests += 1;
     if (options.path === "/api/analytics/events/delete") {
       return { success: true, data: { deleted: options.body.eventIds } };
     }
@@ -542,8 +554,14 @@ test("retention opt-out still drains analytics deletes without uploading counter
 
   await service.syncAll(true);
 
-  assert.equal(localDeletes, 1, "the acknowledged privacy tombstone is retired locally");
+  // assert.equal(localDeletes, 1, "the acknowledged privacy tombstone is retired locally");
+  assert.equal(localDeletes, 0, "no cloud acknowledgement means no local tombstone retirement");
+  assert.equal(deleteReads, 0, "disabled analytics does not inspect queued cloud erasures");
+  assert.equal(analyticsRequests, 0, "retired analytics never requests a cloud deletion");
   assert.equal(uploadReads, 0, "retention opt-out must not inspect or send pending counters");
+  assert.equal(db.getNote(note.id).sync_status, "synced", "ordinary note backup still runs");
+  assert.equal(countersBefore.totalWords, 4);
+  assert.deepEqual(db.getAnalyticsSummary(), countersBefore, "local counters stay unchanged");
 });
 
 test("an ambient pass bows out when another window holds the lock, a manual pass waits", async (t) => {

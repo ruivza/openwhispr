@@ -54,7 +54,7 @@ async function renderChatStreaming(
   t,
   { electronAPI = {}, settings = {}, onStreamComplete, live = false } = {}
 ) {
-  installBrowserGlobals(t, { window: { electronAPI } });
+  installBrowserGlobals(t, { initialStorage: { uiLanguage: "en" }, window: { electronAPI } });
   const container = live ? installHookDom(t) : null;
   const vite = await createRendererServer(t, {
     cachePrefix: "openwhispr-chat-streaming-cancellation-test-",

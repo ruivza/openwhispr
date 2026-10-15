@@ -43,11 +43,15 @@ const unconfiguredOverride = {
   useDictationAgentVisionModel: "true",
 };
 
-async function loadStore(t, initialStorage, cachePrefix) {
+async function loadStore(t, initialStorage, cachePrefix, { legacyCloud = false } = {}) {
   installBrowserGlobals(t, { initialStorage });
   const vite = await createRendererServer(t, {
     cachePrefix,
     resolveAlias: { "@": path.resolve(__dirname, "../../src") },
+    // Only the preserved official-Cloud case opts out of the fork migration.
+    mockModules: legacyCloud
+      ? { "/config/fork.json": '{"officialAccountEnabled":true,"hostedServicesEnabled":true}' }
+      : {},
   });
   await vite.ssrLoadModule("/models/ModelRegistry.ts");
   const store = await vite.ssrLoadModule("/stores/settingsStore.ts");
@@ -57,7 +61,9 @@ async function loadStore(t, initialStorage, cachePrefix) {
 
 test("a managed policy never invents a target for an unconfigured vision override", async (t) => {
   const { useSettingsStore, selectPolicyEffectiveSettings, resolveChatStreamingInference } =
-    await loadStore(t, unconfiguredOverride, "openwhispr-policy-vision-unconfigured-test-");
+    await loadStore(t, unconfiguredOverride, "openwhispr-policy-vision-unconfigured-test-", {
+      legacyCloud: true,
+    });
   const raw = useSettingsStore.getState();
   assert.equal(raw.dictationAgentVisionModel, "", "precondition: nothing chosen");
 
@@ -82,6 +88,52 @@ test("a managed policy never invents a target for an unconfigured vision overrid
     assert.equal(config.mode, "openwhispr");
     assert.equal(attachScreenContext, true);
   });
+});
+
+test("the shipping fork keeps a chosen BYOK screenshot route without inventing an unset override", async (t) => {
+  const { useSettingsStore, selectPolicyEffectiveSettings, resolveChatStreamingInference } =
+    await loadStore(
+      t,
+      {
+        ...unconfiguredOverride,
+        dictationAgentMode: "providers",
+        dictationAgentCloudMode: "byok",
+        dictationAgentProvider: "openai",
+        dictationAgentModel: "gpt-5-mini",
+        dictationAgentVisionProvider: "gemini",
+        dictationAgentVisionModel: "gemini-2.5-flash",
+      },
+      "openwhispr-policy-vision-byok-test-"
+    );
+  const raw = useSettingsStore.getState();
+  assert.equal(raw.isSignedIn, false);
+  const policy = managedByokPolicy(["openai", "gemini"]);
+  const effective = selectPolicyEffectiveSettings(raw, policy);
+  const result = resolveChatStreamingInference(effective, {
+    inferenceScope: "dictationAgent",
+    hasScreenContext: true,
+    isProviderImageWired: (provider) => provider === "gemini",
+  });
+  assert.equal(result.config.scope, "dictationAgentVision");
+  assert.equal(result.config.mode, "providers");
+  assert.equal(result.config.provider, "gemini");
+  assert.equal(result.config.model, "gemini-2.5-flash");
+  assert.equal(result.attachScreenContext, true);
+
+  const unconfigured = selectPolicyEffectiveSettings(
+    { ...raw, dictationAgentVisionProvider: "", dictationAgentVisionModel: "" },
+    policy
+  );
+  assert.equal(unconfigured.dictationAgentVisionProvider, "");
+  assert.equal(unconfigured.dictationAgentVisionModel, "");
+  assert.equal(
+    resolveChatStreamingInference(unconfigured, {
+      inferenceScope: "dictationAgent",
+      hasScreenContext: true,
+      isProviderImageWired: () => true,
+    }).config.scope,
+    "dictationAgent"
+  );
 });
 
 test("a forbidden vision mode cannot redirect a local assistant to Cloud", async (t) => {

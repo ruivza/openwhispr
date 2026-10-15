@@ -116,7 +116,17 @@ This follows the same `release-local.sh --run ... --publish` workflow as SpeechD
 
 The fork follows the upstream version and appends its own revision: `1.10.3-ruivza.1`, `1.10.3-ruivza.2`, then `1.10.4-ruivza.1` after merging upstream `1.10.4`. The Windows app executable's file/product versions use the numeric form `1.10.3.1`. Keep the two Windows metadata values in `electron-builder.json` in sync with each revision. The fresh fork release baseline is `1.10.3-ruivza.1`; old Releases and tags have been cleared separately. Automatic downgrades stay disabled, so a previously installed higher version still needs a manual install.
 
-1. Set `package.json`, the lockfile, and the Windows metadata to the intended release version, commit and push the changes, then push a matching **new** `vX.Y.Z-ruivza.N` tag. Existing tags/assets are never replaced.
+1. Set `package.json`, the lockfile, and the Windows metadata to the intended release version, then commit and push the changes. Synchronization commits contain `[skip ci]`, which also skips tag-push builds. From a clean checkout, create an empty release commit without that marker and push only its matching **new** tag; `main` stays unchanged. Existing tags/assets are never replaced.
+
+   ```bash
+   git fetch origin --tags
+   git switch --detach origin/main
+   RELEASE_VERSION=$(node -p "require('./package.json').version")
+   git commit --allow-empty -m "release: $RELEASE_VERSION"
+   git tag "v$RELEASE_VERSION"
+   git push origin "v$RELEASE_VERSION"
+   ```
+
 2. Wait for **Build tagged packages (unsigned)** to finish successfully and copy its Actions run ID.
 3. On your Mac, fetch and check out that exact tag, then run:
 

@@ -969,7 +969,8 @@ test("large BYOK uploads preserve authentication errors instead of replacing the
   assert.ok(fetches.length <= 5);
 });
 
-test("cloud imports still use the same chunk pipeline, cloud endpoint and isolated session", async (t) => {
+// Original hosted scenario: cloud imports use the chunk pipeline, endpoint and isolated session.
+test("legacy official cloud imports stop before credentials, splitting or network despite saved configuration", async (t) => {
   const fixture = chunkedUploadFixture(t, 5 * 1024 * 1024);
   const previousApiUrl = process.env.OPENWHISPR_API_URL;
   process.env.OPENWHISPR_API_URL = "https://api.openwhispr.example";
@@ -977,7 +978,13 @@ test("cloud imports still use the same chunk pipeline, cloud endpoint and isolat
     if (previousApiUrl === undefined) delete process.env.OPENWHISPR_API_URL;
     else process.env.OPENWHISPR_API_URL = previousApiUrl;
   });
-  t.mock.method(require("../../src/helpers/tokenStore"), "get", () => "cloud-token");
+  // t.mock.method(require("../../src/helpers/tokenStore"), "get", () => "cloud-token");
+  t.mock.method(require("../../src/helpers/tokenStore"), "get", () => {
+    assert.fail("disabled official imports must not read a saved cloud token");
+  });
+  t.mock.method(require("../../src/helpers/ffmpegUtils"), "splitAudioFile", () => {
+    assert.fail("disabled official imports must not split the source file");
+  });
   const partitions = [];
   t.mock.method(electronStub.session, "fromPartition", (partition) => {
     partitions.push(partition);
@@ -996,16 +1003,22 @@ test("cloud imports still use the same chunk pipeline, cloud endpoint and isolat
     fixture.filePath,
     { requestId: "large-upload" }
   );
-  assert.equal(result.success, true, result.error);
-  assert.equal(result.text, "cloud 0 cloud 1 cloud 2");
-  assert.deepEqual(partitions, ["ow-cloud-chunk-uploads"]);
-  assert.equal(fetches.length, 3);
-  for (const { url, init } of fetches) {
-    assert.equal(url, "https://api.openwhispr.example/api/transcribe");
-    assert.equal(init.headers.Authorization, "Bearer cloud-token");
-    assert.match(init.body.toString(), /file_upload/);
-  }
-  assert.equal(fixture.progress.at(-1).requestId, "large-upload");
+  // Original official-cloud success assertions, retired with the hosted route:
+  // assert.equal(result.success, true, result.error);
+  // assert.equal(result.text, "cloud 0 cloud 1 cloud 2");
+  // assert.deepEqual(partitions, ["ow-cloud-chunk-uploads"]);
+  // assert.equal(fetches.length, 3);
+  // for (const { url, init } of fetches) {
+  //   assert.equal(url, "https://api.openwhispr.example/api/transcribe");
+  //   assert.equal(init.headers.Authorization, "Bearer cloud-token");
+  //   assert.match(init.body.toString(), /file_upload/);
+  // }
+  // assert.equal(fixture.progress.at(-1).requestId, "large-upload");
+  assert.equal(result.success, false);
+  assert.match(result.error, /OpenWhispr API URL not configured/);
+  assert.deepEqual(partitions, []);
+  assert.equal(fetches.length, 0);
+  assert.equal(fixture.progress.length, 0);
 });
 
 test("large Custom Azure imports retain deployment URLs and api-key authentication", async (t) => {

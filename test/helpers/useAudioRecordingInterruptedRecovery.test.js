@@ -33,6 +33,7 @@ test("the mount effect recovers interrupted recordings with the translated messa
 
   const noopDispose = () => () => {};
   installBrowserGlobals(t, {
+    initialStorage: { uiLanguage: "en" },
     window: {
       electronAPI: {
         onToggleDictation: noopDispose,

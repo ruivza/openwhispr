@@ -23,7 +23,7 @@ const GUEST_ON_OWN_SETUP = {
   cloudTranscriptionProvider: "groq",
 };
 
-async function mountNudge(t, { settings = {}, prompted = true } = {}) {
+async function mountNudge(t, { settings = {}, prompted = true, legacyCloud = false } = {}) {
   let unmount = async () => {};
   t.after(() => unmount());
   const { storage } = installBrowserGlobals(t, {
@@ -42,6 +42,10 @@ async function mountNudge(t, { settings = {}, prompted = true } = {}) {
     cachePrefix: "openwhispr-cloud-nudge-",
     noExternal: ["react-i18next"],
     mockModules: {
+      // Preserve the historical Cloud preference only in its explicit fixture.
+      ...(legacyCloud
+        ? { "/config/fork.json": '{"officialAccountEnabled":true,"hostedServicesEnabled":true}' }
+        : {}),
       "react-i18next": `
         const t = (key) => key;
         export function useTranslation() { return { t }; }
@@ -139,6 +143,7 @@ test("an ordinary launch by a signed-in user never nudges", async (t) => {
 test("dictation already on Cloud, or a policy that forbids it, gets no nudge", async (t) => {
   await t.test("already on Cloud", async (t) => {
     const nudge = await mountNudge(t, {
+      legacyCloud: true,
       settings: {
         transcriptionMode: "openwhispr",
         cloudTranscriptionMode: "openwhispr",

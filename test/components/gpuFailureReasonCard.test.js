@@ -84,6 +84,8 @@ function settle() {
 
 async function mountPicker(t, vulkanStatus, cudaStatus = cudaPack(), gpuAccelerated = false) {
   installBrowserGlobals(t, {
+    // Keep the existing English copy assertions independent of the host locale.
+    initialStorage: { uiLanguage: "en" },
     window: { location: { search: "" }, electronAPI: { getPlatform: () => "win32" } },
   });
   const vite = await createRendererServer(t, {
