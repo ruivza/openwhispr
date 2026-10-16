@@ -4,7 +4,9 @@ const assert = require("node:assert/strict");
 const registry = require("../../src/models/modelRegistryData.json");
 const load = () => import("../../src/helpers/transcriptionRoute.ts");
 
-// Every model the picker can write must survive a round trip through the resolver, or a user
+// resolveByokModel validates by prefix so it can run in the packaged main process
+// without the registry, which means the two can silently drift apart. Every model
+// the picker can write must survive a round trip through the resolver, or a user
 // who picks it has their choice replaced by the provider default at request time.
 //
 // Tinfoil is excluded: its batch model comes from the registry directly

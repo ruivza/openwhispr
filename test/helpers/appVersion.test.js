@@ -49,3 +49,32 @@ test("keeps renderer and main-process validation behavior aligned", async () => 
     );
   }
 });
+
+test("app version comparison uses strict numeric release parts", () => {
+  const { compareAppVersions } = require("../../src/helpers/appVersion");
+  assert.ok(compareAppVersions("1.10.0", "1.9.9") > 0);
+  assert.equal(compareAppVersions("1.10.2", "1.10.2"), 0);
+  assert.ok(compareAppVersions("1.9.9", "1.10.2") < 0);
+  assert.ok(compareAppVersions("1.10.2-beta", "1.10.2") < 0);
+});
+
+test("installed fork versions normalize without relaxing canonical policy minimums", () => {
+  const {
+    normalizeInstalledAppVersion,
+    isCanonicalAppVersion,
+  } = require("../../src/helpers/appVersion");
+  assert.equal(normalizeInstalledAppVersion("1.10.3-ruivza.4"), "1.10.3");
+  assert.equal(normalizeInstalledAppVersion("1.10.4"), "1.10.4");
+  assert.equal(isCanonicalAppVersion("1.10.3-ruivza.4"), false);
+  for (const version of [
+    undefined,
+    "1.10.3-beta.4",
+    "1.10.3-ruivza.0",
+    "1.10.3-ruivza.04",
+    "1.10.3-ruivza.4.extra",
+    "1.10.3-ruivza.9007199254740992",
+    "01.10.3-ruivza.4",
+  ]) {
+    assert.equal(normalizeInstalledAppVersion(version), null, String(version));
+  }
+});

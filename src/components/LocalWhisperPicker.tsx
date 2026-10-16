@@ -1,4 +1,3 @@
-import { useRegistryVersion } from "../hooks/useRegistryVersion";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { DownloadProgressBar } from "./ui/DownloadProgressBar";
@@ -31,10 +30,9 @@ export default function LocalWhisperPicker({
   className = "",
   variant = "settings",
 }: LocalWhisperPickerProps) {
-  const registryVersion = useRegistryVersion();
   const { t } = useTranslation();
   const [models, setModels] = useState<WhisperModel[]>([]);
-  const loadedRegistryVersion = useRef(-1);
+  const hasLoadedRef = useRef(false);
   const downloadingModelRef = useRef<string | null>(null);
   const selectedModelRef = useRef(selectedModel);
   const onModelSelectRef = useRef(onModelSelect);
@@ -78,8 +76,8 @@ export default function LocalWhisperPicker({
   }, [validateAndSelectModel]);
 
   useEffect(() => {
-    if (loadedRegistryVersion.current === registryVersion) return;
-    loadedRegistryVersion.current = registryVersion;
+    if (hasLoadedRef.current) return;
+    hasLoadedRef.current = true;
 
     window.electronAPI
       ?.listWhisperModels()
@@ -93,7 +91,7 @@ export default function LocalWhisperPicker({
         console.error("[LocalWhisperPicker] Failed to load models:", error);
         setModels([]);
       });
-  }, [validateAndSelectModel, registryVersion]);
+  }, [validateAndSelectModel]);
 
   const {
     downloads,
@@ -147,7 +145,7 @@ export default function LocalWhisperPicker({
     [showConfirmDialog, deleteModel, validateAndSelectModel, t]
   );
 
-  const progressDisplay = (() => {
+  const progressDisplay = useMemo(() => {
     if (!downloadingModel) return null;
     const modelInfo = WHISPER_MODEL_INFO[downloadingModel];
     return (
@@ -160,7 +158,7 @@ export default function LocalWhisperPicker({
         }}
       />
     );
-  })();
+  }, [activeDownload, downloadingModel]);
 
   const whisperIcon = getProviderIcon("whisper");
 

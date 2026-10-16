@@ -4,6 +4,13 @@ import { AudioTools } from '../../../../modules/audio-tools/src';
 import { TranscriptionService } from '../TranscriptionService';
 import type { TranscriptionRequest } from '../../../types';
 
+// Exercise headers in the retained hosted implementation independently of the fork gate.
+// scripts/__tests__/local-build.test.js covers the real gate; production calls remain blocked.
+jest.mock('@/lib/fork', () => ({
+  ...jest.requireActual('@/lib/fork'),
+  requireHostedServices: jest.fn(),
+}));
+
 jest.mock('expo-constants', () => ({
   __esModule: true,
   default: { expoConfig: { version: '1.2.1' } },

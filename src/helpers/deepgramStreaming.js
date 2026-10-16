@@ -1,6 +1,5 @@
 const WebSocket = require("ws");
 const debugLogger = require("./debugLogger");
-const { getRegistryData } = require("../models/registryData.js");
 
 const SAMPLE_RATE = 16000;
 const WEBSOCKET_TIMEOUT_MS = 30000;
@@ -73,23 +72,6 @@ const SILENCE_FRAME = Buffer.alloc((SAMPLE_RATE / 10) * 2);
 // only as `Token`, `Bearer` only for what /v1/auth/grant mints (managed). #2140
 const authorizationHeader = (mode, token) => `${mode === "byok" ? "Token" : "Bearer"} ${token}`;
 
-function resolveModel(options) {
-  const selected = typeof options.model === "string" ? options.model.trim() : "";
-  if (
-    options.mode === "byok" &&
-    selected !== "nova-3" &&
-    getRegistryData()
-      .transcriptionProviders.find((provider) => provider.id === "deepgram")
-      ?.models.some((model) => model.id === selected && model.streaming)
-  ) {
-    return selected;
-  }
-  // Keep the existing Nova-3 language fallback and managed routing contract.
-  const lang = options.language && options.language !== "auto" ? options.language : null;
-  const baseLang = lang ? lang.split("-")[0].toLowerCase() : null;
-  return !lang || NOVA3_LANGUAGES.has(lang) || NOVA3_LANGUAGES.has(baseLang) ? "nova-3" : "nova-2";
-}
-
 // Everything buildWebSocketUrl pins on the socket, folded the way it folds it, so
 // a warm connection can be compared against the session that wants to ride it.
 // Dictation warms on the UI language before it can know a translation wants the
@@ -99,7 +81,6 @@ const urlIdentity = (options) =>
     options.sampleRate || SAMPLE_RATE,
     options.language && options.language !== "auto" ? options.language : null,
     (options.keyterms || []).filter(Boolean),
-    resolveModel(options),
   ]);
 
 class DeepgramStreaming {
@@ -156,10 +137,15 @@ class DeepgramStreaming {
   buildWebSocketUrl(options) {
     const sampleRate = options.sampleRate || SAMPLE_RATE;
     const lang = options.language && options.language !== "auto" ? options.language : null;
-    const model = resolveModel(options);
+    const baseLang = lang ? lang.split("-")[0].toLowerCase() : null;
+    const useNova3 = !lang || NOVA3_LANGUAGES.has(lang) || NOVA3_LANGUAGES.has(baseLang);
+    // options.model is intentionally ignored: the registry only offers nova-3,
+    // and honouring a user-pinned family would defeat the nova-2 downgrade that
+    // keeps languages outside NOVA3_LANGUAGES working.
+    const model = useNova3 ? "nova-3" : "nova-2";
     this.currentModel = model;
 
-    if (model === "nova-2") {
+    if (!useNova3) {
       debugLogger.debug("Deepgram falling back to nova-2", { language: lang });
     }
 
@@ -176,7 +162,7 @@ class DeepgramStreaming {
     }
     if (Array.isArray(options.keyterms)) {
       // Nova-3 uses "keyterm", Nova-2 uses "keywords"
-      const paramName = model.startsWith("nova-2") ? "keywords" : "keyterm";
+      const paramName = useNova3 ? "keyterm" : "keywords";
       for (const term of options.keyterms) {
         if (term) params.append(paramName, term);
       }
@@ -631,7 +617,6 @@ class DeepgramStreaming {
       language: options.language,
       keyterms: options.keyterms,
       mode: options.mode,
-      model: options.model,
     };
     this.accumulatedText = "";
     this.finalSegments = [];

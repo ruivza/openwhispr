@@ -1,4 +1,3 @@
-import { useRegistryVersion } from "../../hooks/useRegistryVersion";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { ProviderIcon } from "../ui/ProviderIcon";
@@ -148,7 +147,6 @@ export default function BackgroundModelDownloadTray({
 }: {
   placement?: "onboarding" | "control-panel";
 }) {
-  useRegistryVersion();
   const { t } = useTranslation();
   const [downloads, setDownloads] = useState<Record<string, ActiveDownload>>({});
   const [hydrated, setHydrated] = useState(false);

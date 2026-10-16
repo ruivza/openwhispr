@@ -1,4 +1,3 @@
-import { useRegistryVersion } from "../../hooks/useRegistryVersion";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { AlertCircle, Check } from "../icons";
 import { useTranslation } from "react-i18next";
@@ -35,7 +34,6 @@ export function RequiredModelDownloadStep({
   refresh,
   onProceed,
 }: RequiredModelDownloadStepProps) {
-  useRegistryVersion();
   const { t } = useTranslation();
   const whisperCatalog = getWhisperModels();
   const parakeetCatalog = getParakeetModels();

@@ -1,4 +1,3 @@
-import { useRegistryVersion } from "../hooks/useRegistryVersion";
 import { useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2, Search } from "./icons";
@@ -92,9 +91,8 @@ function FieldHint({ children }: { children: React.ReactNode }) {
 }
 
 function useSuggestedModels(provider: "bedrock" | "vertex") {
-  useRegistryVersion();
   const { t } = useTranslation();
-  return (() => {
+  return useMemo(() => {
     const providerData = REASONING_PROVIDERS[provider];
     if (!providerData?.models?.length) return [];
     const iconUrl = getProviderIcon(provider);
@@ -107,7 +105,7 @@ function useSuggestedModels(provider: "bedrock" | "vertex") {
       icon: iconUrl,
       invertInDark,
     }));
-  })();
+  }, [t, provider]);
 }
 
 type BedrockCatalogState =

@@ -1,4 +1,3 @@
-import { useRegistryVersion } from "../../hooks/useRegistryVersion";
 import { Fragment, forwardRef, useRef, useState } from "react";
 import {
   AlertCircle,
@@ -125,7 +124,6 @@ export default function SetupChoiceStep({
   onSelect,
   onRequestAuthentication,
 }: SetupChoiceStepProps) {
-  useRegistryVersion();
   const { t } = useTranslation();
   const policy = usePolicySnapshot();
   const [pending, setPending] = useState<WarningSetupMode | null>(null);

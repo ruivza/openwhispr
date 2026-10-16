@@ -27,6 +27,11 @@ const GUEST_SESSION_KEY = 'openwhispr_guest_session';
 // including failures, so its late result cannot overwrite the chosen session.
 let anonymousSignInInFlight: Promise<void> | null = null;
 
+// Keep the legacy sign-in wait compatible while this build never starts an official session.
+function pendingAnonymousSignIn(): Promise<void> | null {
+  return anonymousSignInInFlight;
+}
+
 type SessionResult = {
   user: AuthUser | null;
   sessionCookie: string | null;
@@ -90,7 +95,7 @@ export const useAuthStore = create<AuthStore>((set) => ({
 
   signIn: async (email, password) => {
     set({ isLoading: true, error: null });
-    await anonymousSignInInFlight?.catch(() => undefined);
+    await pendingAnonymousSignIn()?.catch(() => undefined);
     const result = await signInWithEmail(email, password);
     if (result.error || !result.user) {
       set({ isLoading: false, error: result.error || 'Sign in failed' });
@@ -101,7 +106,7 @@ export const useAuthStore = create<AuthStore>((set) => ({
 
   signUp: async (email, password, name) => {
     set({ isLoading: true, error: null });
-    await anonymousSignInInFlight?.catch(() => undefined);
+    await pendingAnonymousSignIn()?.catch(() => undefined);
     const result = await signUpWithEmail(email, password, name);
     if (result.error || !result.user) {
       set({ isLoading: false, error: result.error || 'Sign up failed' });
@@ -112,26 +117,26 @@ export const useAuthStore = create<AuthStore>((set) => ({
 
   signInWithGoogle: async () => {
     set({ isLoading: true, loadingProvider: 'google', error: null });
-    await anonymousSignInInFlight?.catch(() => undefined);
+    await pendingAnonymousSignIn()?.catch(() => undefined);
     await applyOAuthResult(set, await signInWithGoogleApi());
   },
 
   signInWithApple: async () => {
     set({ isLoading: true, loadingProvider: 'apple', error: null });
-    await anonymousSignInInFlight?.catch(() => undefined);
+    await pendingAnonymousSignIn()?.catch(() => undefined);
     await applyOAuthResult(set, await signInWithAppleApi());
   },
 
   signInWithMicrosoft: async () => {
     set({ isLoading: true, loadingProvider: 'microsoft', error: null });
-    await anonymousSignInInFlight?.catch(() => undefined);
+    await pendingAnonymousSignIn()?.catch(() => undefined);
     await applyOAuthResult(set, await signInWithMicrosoftApi());
   },
 
   continueAsGuest: async () => {
     set({ isLoading: true });
     try {
-      await anonymousSignInInFlight?.catch(() => undefined);
+      await pendingAnonymousSignIn()?.catch(() => undefined);
       await clearSession();
       await SecureStore.setItemAsync(GUEST_SESSION_KEY, 'true');
       useUsageStore.getState().reset();
@@ -202,7 +207,7 @@ export const useAuthStore = create<AuthStore>((set) => ({
 
   deleteAccount: async () => {
     set({ isLoading: true, error: null });
-    await anonymousSignInInFlight?.catch(() => undefined);
+    await pendingAnonymousSignIn()?.catch(() => undefined);
     try {
       await deleteAccountApi();
       const deletedUserId = useAuthStore.getState().user?.id;

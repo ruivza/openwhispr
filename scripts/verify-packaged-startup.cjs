@@ -35,8 +35,25 @@ function startupFailure(output) {
 function validateProbe(value, expectedVersion) {
   if (!value?.ready) return false;
   assert.equal(value.version, expectedVersion, "Packaged app version differs from package.json");
-  assert.ok(Number.isSafeInteger(value.manifestVersion) && value.manifestVersion > 0);
-  assert.ok(value.modelCount > 0, "Packaged registry has no usable transcription models");
+  const catalog = require("../src/models/modelRegistryData.json");
+  for (const provider of ["whisper", "parakeet"]) {
+    const listing = value.models?.[provider];
+    assert.equal(listing?.success, true, `Packaged ${provider} model IPC failed`);
+    assert.ok(Array.isArray(listing.models), `Packaged ${provider} model list is missing`);
+    const expectedModels = Object.keys(catalog[`${provider}Models`]).sort();
+    assert.ok(expectedModels.length > 0, `Static ${provider} catalog has no models`);
+    assert.deepEqual(
+      Array.from(listing.models, (model) => model.model).sort(),
+      expectedModels,
+      `Packaged ${provider} models differ from the static catalog`
+    );
+    for (const model of listing.models) {
+      assert.equal(model.success, true, `Packaged model status failed: ${model.model}`);
+      assert.equal(typeof model.downloaded, "boolean", `Invalid model status: ${model.model}`);
+    }
+  }
+  for (const table of ["transcriptions", "notes"])
+    assert.ok(Array.isArray(value.database?.[table]), `Packaged ${table} database IPC failed`);
   return true;
 }
 
@@ -90,7 +107,10 @@ async function connectCdp(url, onException) {
 const PROBE = `(async () => {
   const root = document.getElementById("root");
   const api = window.electronAPI;
-  if (document.readyState !== "complete" || !api?.getAppVersion || !api?.getModelRegistry)
+  const methods = ["getAppVersion", "setAutoUpdatesEnabled", "listWhisperModels",
+    "listParakeetModels", "getTranscriptions", "getNotes"];
+  if (document.readyState !== "complete" ||
+      methods.some(method => typeof api?.[method] !== "function"))
     return { ready: false };
   // Use the existing preference IPC; never let a test install an update.
   await api.setAutoUpdatesEnabled(false);
@@ -98,13 +118,19 @@ const PROBE = `(async () => {
     .some(button => !button.disabled && button.getClientRects().length > 0);
   if (!interactive || !root.textContent.trim()) return { ready: false };
   const version = await api.getAppVersion();
-  const registry = await api.getModelRegistry();
+  // These existing IPCs read the bundled static model lists and local database.
+  // Listing models must work before any model is downloaded; do not start a download.
+  const [whisper, parakeet, transcriptions, notes] = await Promise.all([
+    api.listWhisperModels(),
+    api.listParakeetModels(),
+    api.getTranscriptions(1),
+    api.getNotes(null, 1),
+  ]);
   return {
     ready: true,
     version: version.version,
-    manifestVersion: registry.manifestVersion,
-    modelCount: registry.data.transcriptionProviders.reduce((count, provider) =>
-      count + provider.models.length, 0)
+    models: { whisper, parakeet },
+    database: { transcriptions, notes },
   };
 })()`;
 
@@ -146,7 +172,6 @@ async function verifyPackagedStartup(appPath, { timeoutMs = 90000 } = {}) {
     ...process.env,
     NODE_ENV: "production",
     OPENWHISPR_CHANNEL: "production",
-    OPENWHISPR_MODEL_REGISTRY_MODE: "bundled",
     START_MINIMIZED: "false",
   };
   delete env.ELECTRON_RUN_AS_NODE;
@@ -229,7 +254,7 @@ async function verifyPackagedStartup(appPath, { timeoutMs = 90000 } = {}) {
           if (Date.now() - readySince >= 5000) {
             if (failure) throw new Error(failure);
             console.log(
-              `Packaged startup passed: ${expectedVersion}; interactive control panel and registry IPC stable for 5 seconds.`
+              `Packaged startup passed: ${expectedVersion}; interactive control panel, static models and database IPC stable for 5 seconds.`
             );
             console.log(`Startup log: ${logFile}`);
             return;
@@ -238,7 +263,9 @@ async function verifyPackagedStartup(appPath, { timeoutMs = 90000 } = {}) {
       }
       await delay(500);
     }
-    throw new Error("Timed out waiting for an interactive packaged control panel and registry IPC");
+    throw new Error(
+      "Timed out waiting for an interactive packaged control panel, static models and database IPC"
+    );
   } catch (error) {
     throw new Error(`${error.message}\nStartup log: ${logFile}\n${output.slice(-6000)}`);
   } finally {
@@ -269,6 +296,7 @@ module.exports = {
   isControlPanelTarget,
   startupFailure,
   validateProbe,
+  PROBE,
   connectCdp,
   verifyPackagedStartup,
 };

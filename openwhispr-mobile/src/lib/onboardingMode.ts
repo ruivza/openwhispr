@@ -1,11 +1,8 @@
-import { useAuthStore } from '@/store/useAuthStore';
 import { useConfigStore } from '@/store/useConfigStore';
 import { useOnboardingStore } from '@/store/useOnboardingStore';
 import { useProcessingModeStore } from '@/store/useProcessingModeStore';
-import { hasRealAccountHistory } from '@/sync/syncIdentity';
 import type { UserConfig } from '@/types';
-import { dictationModeConfig } from './inferenceModes';
-import { OnboardingError } from './onboardingErrors';
+import { dictationModeConfig, holdOnDeviceConfig } from './inferenceModes';
 
 // updateConfig reports persistence errors in its store instead of rejecting.
 // Onboarding must not advance until the user's preference is actually saved.
@@ -22,37 +19,43 @@ export async function chooseOnboardingMode(
   // Official Cloud selections from old screens resume as local setup.
   if (mode === 'cloud') mode = 'private';
   if (useOnboardingStore.getState().currentStep !== from) return;
-//   const auth = useAuthStore.getState();
-//   if (mode === 'cloud' && !auth.user) {
-//     // Guests declined an account, and a device that synced one must not get a new identity (its
-//     // first sync would read as an account switch and wipe that account's notes), so neither opens
-//     // a session during setup. On the download step Cloud is their only way past a download that
-//     // can't finish, so it's saved for after sign-in instead of refused.
-//     if (auth.isGuest || hasRealAccountHistory()) {
-//       if (from !== 'private-download')
-//         throw new OnboardingError(
-//           auth.isGuest
-//             ? 'Cloud needs an account. Use Local for now, or sign in after setup.'
-//             : 'Cloud needs you signed in. Use Local for now, or sign in after setup.',
-//         );
-//     } else {
-//       await auth.ensureAnonymousSession();
-//       if (!useAuthStore.getState().user) {
-//         throw new OnboardingError(
-//           'Cloud needs a connection to set up. Try again or use Local for now.',
-//         );
-//       }
-//     }
-//   }
+  //   const auth = useAuthStore.getState();
+  //   if (mode === 'cloud' && !auth.user) {
+  //     // Guests declined an account, and a device that synced one must not get a new identity (its
+  //     // first sync would read as an account switch and wipe that account's notes), so neither opens
+  //     // a session during setup. On the download step Cloud is their only way past a download that
+  //     // can't finish, so it's saved for after sign-in instead of refused.
+  //     if (auth.isGuest || hasRealAccountHistory()) {
+  //       if (from !== 'private-download')
+  //         throw new OnboardingError(
+  //           auth.isGuest
+  //             ? 'Cloud needs an account. Use Local for now, or sign in after setup.'
+  //             : 'Cloud needs you signed in. Use Local for now, or sign in after setup.',
+  //         );
+  //     } else {
+  //       await auth.ensureAnonymousSession();
+  //       if (!useAuthStore.getState().user) {
+  //         throw new OnboardingError(
+  //           'Cloud needs a connection to set up. Try again or use Local for now.',
+  //         );
+  //       }
+  //     }
+  //   }
   if (useOnboardingStore.getState().currentStep !== from) return;
   const config = useConfigStore.getState().config ?? null;
   const previous = {
-    defaultMode: config?.defaultMode ?? 'cloud',
+    defaultMode: config?.defaultMode ?? 'private',
     inference: config?.inference,
     pinnedInference: config?.pinnedInference,
+    privateModeReturn: config?.privateModeReturn,
   };
   // The dictation route moves with the mode, so a replayed pick also leaves a Providers route.
-  await saveOnboardingConfig(dictationModeConfig(config, mode));
+  // Choosing Local in setup also keeps uploads and cleanup on this iPhone; going back to Cloud
+  // releases them, since the mode changes.
+  const next = dictationModeConfig(config, mode);
+  await saveOnboardingConfig(
+    mode === 'private' ? { ...next, ...holdOnDeviceConfig({ ...config, ...next }) } : next,
+  );
   useProcessingModeStore.getState().resetToDefault(mode);
   try {
     await useOnboardingStore.getState().chooseMode(mode, from);

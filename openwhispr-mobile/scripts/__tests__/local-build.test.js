@@ -110,6 +110,7 @@ test('config hydration persists migrated routes and never converts a saved provi
   const original = { defaultMode: 'providers', inference: { dictation: { mode: 'providers', providerId: 'openai', credentialRef: 'old-key' }, notes: { mode: 'openwhispr' } } };
   const client = loader({
     zustand: { create: createStore },
+    'react-native': { Platform: { OS: 'ios' } },
     '../services/storage/StorageService': { StorageService: { getConfig: async () => original, saveConfig: async (value) => { saved = value; if (failPersistence) throw new Error('synthetic write failure'); } } },
     './useProcessingModeStore': { useProcessingModeStore: { getState: () => ({ resetToDefault: (mode) => { activeMode = mode; } }) } },
   });
@@ -118,6 +119,8 @@ test('config hydration persists migrated routes and never converts a saved provi
   assert.equal(activeMode, 'providers');
   assert.equal(saved.inference.dictation.credentialRef, 'old-key');
   assert.equal(saved.inference.notes.mode, 'local');
+  assert.equal(saved.localModeUpgraded, true);
+  assert.equal(saved.cloudBackupEnabled, false);
   assert.equal(useConfigStore.getState().config.inference.dictation.credentialRef, 'old-key');
   }
 });

@@ -1,5 +1,4 @@
-import { useRegistryVersion } from "../hooks/useRegistryVersion";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import type {
   LlamaServerStatus,
@@ -345,7 +344,6 @@ export default function ReasoningModelSelector({
   setReasoningMode: setReasoningModeProp,
   mode,
 }: ReasoningModelSelectorProps) {
-  useRegistryVersion();
   const { t } = useTranslation();
   const openaiApiKey = useSettingsStore((s) => s.openaiApiKey);
   const setOpenaiApiKey = useSettingsStore((s) => s.setOpenaiApiKey);
@@ -370,20 +368,23 @@ export default function ReasoningModelSelector({
     [policyState]
   );
 
-  const cloudProviderTabs = (() =>
-    filterByokProviderOptionsByPolicy(
-      CLOUD_PROVIDER_IDS.map((id): ProviderTabItem => ({
-        id,
-        name:
-          id === "custom"
-            ? t("reasoning.custom.providerName")
-            : id === OPENROUTER_TAB
-              ? "OpenRouter"
-              : REASONING_PROVIDERS[id as keyof typeof REASONING_PROVIDERS]?.name || id,
-      })),
-      "llm",
-      policyState
-    ))();
+  const cloudProviderTabs = useMemo(
+    () =>
+      filterByokProviderOptionsByPolicy(
+        CLOUD_PROVIDER_IDS.map((id): ProviderTabItem => ({
+          id,
+          name:
+            id === "custom"
+              ? t("reasoning.custom.providerName")
+              : id === OPENROUTER_TAB
+                ? "OpenRouter"
+                : REASONING_PROVIDERS[id as keyof typeof REASONING_PROVIDERS]?.name || id,
+        })),
+        "llm",
+        policyState
+      ),
+    [policyState, t]
+  );
   const cloudProviders = cloudProviderTabs;
   const cloudProviderFallback = reconcileProviderSelection(selectedCloudProvider, cloudProviders);
   const displayedCloudProvider = cloudProviderFallback ?? selectedCloudProvider;
@@ -406,7 +407,7 @@ export default function ReasoningModelSelector({
       ? selectedMode
       : (modeTabs[0]?.id as "cloud" | "local" | undefined));
 
-  const localProviders = (() => {
+  const localProviders = useMemo<LocalProvider[]>(() => {
     return modelRegistry.getAllProviders().map((provider) => ({
       id: provider.id,
       name: provider.name,
@@ -421,9 +422,9 @@ export default function ReasoningModelSelector({
         recommended: model.recommended,
       })),
     }));
-  })();
+  }, []);
 
-  const openaiModelOptions = (() => {
+  const openaiModelOptions = useMemo<CloudModelOption[]>(() => {
     const { icon, invertInDark } = getRemoteProviderIcon("openai");
     return REASONING_PROVIDERS.openai.models.map((model) => ({
       ...model,
@@ -433,9 +434,9 @@ export default function ReasoningModelSelector({
       icon,
       invertInDark,
     }));
-  })();
+  }, [t]);
 
-  const selectedCloudModels = (() => {
+  const selectedCloudModels = useMemo<CloudModelOption[]>(() => {
     if (displayedCloudProvider === "openai") return openaiModelOptions;
     if (displayedCloudProvider === "custom" || displayedCloudProvider === OPENROUTER_TAB) return [];
 
@@ -456,12 +457,10 @@ export default function ReasoningModelSelector({
       icon: iconUrl,
       invertInDark,
     }));
-  })();
+  }, [displayedCloudProvider, openaiModelOptions, tinfoilModels, t]);
 
   useEffect(() => {
-    // Only a committed provider change resets browsing. Catalog refreshes
-    // update model cards without jumping back to the saved provider tab.
-    const localProviderIds = modelRegistry.getAllProviders().map((p) => p.id);
+    const localProviderIds = localProviders.map((p) => p.id);
     if (localProviderIds.includes(localReasoningProvider)) {
       setSelectedMode("local");
       setSelectedLocalProvider(localReasoningProvider);
@@ -469,7 +468,7 @@ export default function ReasoningModelSelector({
       setSelectedMode("cloud");
       setSelectedCloudProvider(localReasoningProvider);
     }
-  }, [localReasoningProvider]);
+  }, [localProviders, localReasoningProvider]);
 
   // A selection commits only on an explicit click: the model together with
   // the provider tab it was clicked under. Tab switching is pure browsing.

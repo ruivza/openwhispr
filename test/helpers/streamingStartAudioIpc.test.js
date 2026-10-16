@@ -8,6 +8,7 @@ const { WebSocketServer } = require("ws");
 
 const AssemblyAiStreaming = require("../../src/helpers/assemblyAiStreaming");
 const CortiStreaming = require("../../src/helpers/cortiStreaming");
+const { GeminiLiveStreaming } = require("../../src/helpers/geminiLiveStreaming");
 const { audioRecorder } = require("./harness/audioRecorder");
 const { deferred } = require("./harness/deferred");
 
@@ -21,6 +22,9 @@ const userDataDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "streaming-start
 const event = { sender: { id: 1 } };
 // The audio each provider socket received, in the order the sockets opened.
 const sockets = [];
+const geminiSockets = [];
+let pendingGeminiSetup = null;
+let geminiKey = "";
 let server;
 // When set, the next token mint waits on it: the network round trip a start
 // makes before its socket exists.
@@ -43,6 +47,12 @@ class LoopbackAssemblyAi extends AssemblyAiStreaming {
 class LoopbackCorti extends CortiStreaming {
   buildWebSocketUrl(options) {
     return super.buildWebSocketUrl(options).replace(/^wss:\/\/[^?]+/, loopbackUrl("corti"));
+  }
+}
+
+class LoopbackGemini extends GeminiLiveStreaming {
+  buildWebSocketUrl({ token }) {
+    return `${loopbackUrl("gemini")}?key=${token}`;
   }
 }
 
@@ -79,6 +89,11 @@ Module._load = function loadWithLoopback(request, parent, isMain) {
   if (parent?.filename === modulePath) {
     if (request === "./assemblyAiStreaming") return LoopbackAssemblyAi;
     if (request === "./cortiStreaming") return LoopbackCorti;
+    if (request === "./geminiLiveStreaming")
+      return {
+        GeminiLiveStreaming: LoopbackGemini,
+        GEMINI_LIVE_MODEL: "gemini-3.5-transcribe-live",
+      };
   }
   return originalLoad.call(this, request, parent, isMain);
 };
@@ -95,9 +110,17 @@ function anything() {
 }
 
 const target = {
-  environmentManager: { getAssemblyAIKey: () => "byok-key" },
+  environmentManager: {
+    getAssemblyAIKey: () => "byok-key",
+    getGeminiKey: () => geminiKey,
+    saveGeminiKey: (key) => {
+      geminiKey = key;
+      return { success: true };
+    },
+  },
   assemblyAiStreaming: null,
   cortiStreaming: null,
+  geminiStreaming: null,
   _mintStoredCortiToken: async (options) => ({
     token: await mintToken("corti-token"),
     environment: options.environment,
@@ -111,6 +134,31 @@ test.before(async () => {
   server.on("connection", (socket, request) => {
     const audio = audioRecorder();
     sockets.push(audio);
+    if (request.url.startsWith("/gemini")) {
+      const frames = [];
+      geminiSockets.push({
+        key: new URL(request.url, "http://localhost").searchParams.get("key"),
+        audio,
+        frames,
+      });
+      socket.on("message", (data) => {
+        const message = JSON.parse(data.toString());
+        if (message.setup) {
+          const handshake = pendingGeminiSetup;
+          handshake?.entered.resolve();
+          Promise.resolve(handshake?.ready.promise).then(() =>
+            socket.send(JSON.stringify({ setupComplete: {} }))
+          );
+        } else if (message.realtimeInput?.audio) {
+          const frame = Buffer.from(message.realtimeInput.audio.data, "base64");
+          frames.push(frame);
+          audio.record(frame);
+        } else if (message.realtimeInput?.audioStreamEnd) {
+          socket.send(JSON.stringify({ serverContent: { generationComplete: true } }));
+        }
+      });
+      return;
+    }
     // AssemblyAI begins on connect; Corti waits for its config.
     if (request.url.startsWith("/assemblyai")) {
       socket.send(JSON.stringify({ type: "Begin", id: "test-session" }));
@@ -204,3 +252,37 @@ for (const { name, channel, client, options } of PROVIDERS) {
     });
   }
 }
+
+test("Gemini keeps opening microphone frames off an old-key warm handshake", async (t) => {
+  const handshake = { entered: deferred(), ready: deferred() };
+  t.after(async () => {
+    pendingGeminiSetup = null;
+    handshake.ready.resolve();
+    await handlers.get("gemini-streaming-stop")();
+  });
+  handlers.get("save-gemini-key")(event, "old-key");
+  pendingGeminiSetup = handshake;
+  const warmup = handlers.get("gemini-streaming-warmup")(event, { mode: "byok" });
+  await handshake.entered.promise;
+  handlers.get("save-gemini-key")(event, "new-key");
+  const start = handlers.get("gemini-streaming-start")(event, { mode: "byok" });
+  const frames = [1, 2, 3].map((value) => Buffer.alloc(1600, value));
+  const send = (frame) => handlers.get("gemini-streaming-send")(event, frame);
+  send(frames[0]);
+  send(frames[1]);
+  pendingGeminiSetup = null;
+  handshake.ready.resolve();
+  assert.equal((await warmup).success, true);
+  assert.deepEqual(await start, { success: true, usedWarmConnection: false });
+  send(frames[2]);
+  assert.deepEqual(
+    geminiSockets.map(({ key }) => key),
+    ["old-key", "new-key"]
+  );
+  assert.deepEqual(await geminiSockets[1].audio.received(4800), Buffer.concat(frames));
+  assert.deepEqual(
+    geminiSockets[0].frames,
+    [],
+    "the previous credential receives no new dictation"
+  );
+});

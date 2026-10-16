@@ -75,9 +75,6 @@ test("Prompt Studio labels dictation-agent runs for policy enforcement", async (
                 const value = call === 1 ? "test" : typeof initial === "function" ? initial() : initial;
                 return [value, () => {}];
               }
-              export function useSyncExternalStore(_subscribe, getSnapshot) {
-                return getSnapshot();
-              }
             `;
           }
           if (id === "\0prompt-studio-jsx-runtime") {

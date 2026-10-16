@@ -1,4 +1,3 @@
-import { useRegistryVersion } from "../hooks/useRegistryVersion";
 import React, { useState, useCallback, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "./ui/button";
@@ -1149,7 +1148,6 @@ export default function SettingsPage({
   onNavigateToSection,
   initialSubTab,
 }: SettingsPageProps) {
-  useRegistryVersion();
   const { isCompact } = useSettingsLayout();
   const {
     confirmDialog,
@@ -1381,6 +1379,7 @@ export default function SettingsPage({
     hasYdotool: boolean;
     hasYdotoold: boolean;
     hasWtype: boolean;
+    hasWlCopy: boolean;
     daemonRunning: boolean;
     hasService: boolean;
     hasUinput: boolean;
@@ -1389,6 +1388,7 @@ export default function SettingsPage({
     isKde: boolean;
     isWlroots: boolean;
     isCosmic: boolean;
+    requiresWlCopy: boolean;
     hasXclip: boolean;
     hasXsel: boolean;
     isNixOS: boolean;
@@ -3840,6 +3840,26 @@ EOF`,
                             { cmd: "sudo dnf install xclip  # Fedora" },
                             { cmd: "sudo apt install xclip  # Debian/Ubuntu" },
                           ],
+                        },
+                      ],
+                    });
+                  }
+
+                  if (ydotoolStatus.requiresWlCopy) {
+                    checks.push({
+                      key: "hasWlCopy",
+                      label: "wl-copy",
+                      ok: ydotoolStatus.hasWlCopy,
+                      required: true,
+                      desc: t("settingsPage.general.waylandPaste.wlCopyDesc"),
+                      steps: [
+                        {
+                          title: t("settingsPage.general.waylandPaste.guide.wlCopy.step1Title"),
+                          cmds: getLinuxPasteInstallCommands(t, "wl-clipboard"),
+                        },
+                        {
+                          title: t("settingsPage.general.waylandPaste.guide.wlCopy.step2Title"),
+                          cmds: [{ cmd: "which wl-copy" }],
                         },
                       ],
                     });

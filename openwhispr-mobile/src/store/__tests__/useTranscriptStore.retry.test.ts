@@ -62,6 +62,10 @@ jest.mock('@/store/useProcessingModeStore', () => ({
   },
 }));
 
+jest.mock('@/store/useAuthStore', () => ({
+  useAuthStore: { getState: () => ({ user: null }) },
+}));
+
 jest.mock('@/lib/appsflyer', () => ({
   logTranscriptionCompleted: mockLogTranscriptionCompleted,
 }));
@@ -172,8 +176,8 @@ describe('useTranscriptStore retry support', () => {
 
     expect(mockTranscribeAndCleanup).toHaveBeenCalledWith(
       expect.objectContaining({
-        audioUri: 'file://docs/transcript-audio/t1.m4a',
-        provider: 'cloud',
+        audioUri: 'file://tmp/retry.wav',
+        provider: 'local',
         requestContext: 'keyboard',
         keyboardTone: 'formal',
         language: 'en',
@@ -458,13 +462,13 @@ describe('BYOK retry destination', () => {
 });
 
 it('retains text-stage routes on failed rows and passes them unchanged to retry', async () => {
-  const cleanupRoute = { mode: 'openwhispr' as const, scope: 'cleanup' as const };
+  const cleanupRoute = { mode: 'local' as const, scope: 'cleanup' as const };
   const agentRoute = { mode: 'local' as const, scope: 'agent' as const };
   await useTranscriptStore.getState().addFailedTranscript({
     id: 'stage-retry',
     errorMessage: 'failed',
     audioUrl: 'file://docs/transcript-audio/stage-retry.m4a',
-    provider: 'cloud',
+    provider: 'local',
     cleanupRoute,
     agentRoute,
     agentUnavailable: 'Agent unavailable.',
@@ -489,7 +493,24 @@ it('retries a Cloud recording on-device after switching to private mode', async 
   );
 });
 
-it('retries an On-Device recording on Cloud after switching to Cloud', async () => {
+// Local Mode keeps dictation on this phone, but an upload follows what is chosen for uploads.
+it('retries an upload in Local Mode on the route chosen for uploads', async () => {
+  mockProcessingModeState.activeMode = 'private';
+  mockSnapshotTranscriptionJob.mockReturnValueOnce({
+    provider: 'cloud',
+    cleanupRoute: { mode: 'openwhispr', scope: 'cleanup' },
+  });
+  useTranscriptStore.setState({
+    transcripts: [failedTranscript({ provider: 'local', requestContext: 'file' })],
+  });
+  await useTranscriptStore.getState().retryTranscript('t1');
+  expect(mockSnapshotTranscriptionJob).toHaveBeenCalledWith('upload');
+  expect(mockTranscribeAndCleanup).toHaveBeenCalledWith(
+    expect.objectContaining({ provider: 'cloud' }),
+  );
+});
+
+it('keeps an On-Device recording local with a persisted pre-fork Cloud mode', async () => {
   useTranscriptStore.setState({
     transcripts: [
       failedTranscript({ provider: 'local', cleanupRoute: { mode: 'local', scope: 'cleanup' } }),
@@ -498,13 +519,13 @@ it('retries an On-Device recording on Cloud after switching to Cloud', async () 
   await useTranscriptStore.getState().retryTranscript('t1');
   expect(mockTranscribeAndCleanup).toHaveBeenCalledWith(
     expect.objectContaining({
-      provider: 'cloud',
-      cleanupRoute: { mode: 'openwhispr', scope: 'cleanup' },
+      provider: 'local',
+      cleanupRoute: { mode: 'local', scope: 'cleanup' },
     }),
   );
 });
 
-it('saves the rerouted text routes when a rerouted retry fails', async () => {
+it('keeps local text routes when a retry from a legacy Cloud mode fails', async () => {
   useTranscriptStore.setState({
     transcripts: [
       failedTranscript({ provider: 'local', cleanupRoute: { mode: 'local', scope: 'cleanup' } }),
@@ -513,8 +534,8 @@ it('saves the rerouted text routes when a rerouted retry fails', async () => {
   mockTranscribeAndCleanup.mockRejectedValueOnce(new Error('network down'));
   await expect(useTranscriptStore.getState().retryTranscript('t1')).rejects.toThrow();
   expect(useTranscriptStore.getState().transcripts[0]).toMatchObject({
-    provider: 'cloud',
-    cleanupRoute: { mode: 'openwhispr', scope: 'cleanup' },
+    provider: 'local',
+    cleanupRoute: { mode: 'local', scope: 'cleanup' },
   });
 });
 
@@ -951,7 +972,7 @@ describe('retry destination in Bring Your Own Key mode', () => {
     mockTranscribeAndCleanup.mockClear();
     await useTranscriptStore.getState().retryTranscript('t1');
     expect(mockTranscribeAndCleanup).toHaveBeenCalledWith(
-      expect.objectContaining({ provider: 'cloud', inferenceRoute: undefined }),
+      expect.objectContaining({ provider: 'local', inferenceRoute: undefined }),
     );
   });
 });

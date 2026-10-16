@@ -24,7 +24,7 @@ jest.mock('@/hooks/useSheetDragToDismiss', () => ({
 jest.mock('@/components/ui/Text', () => ({ Text: require('react-native').Text }));
 jest.mock('@/components/ui/SystemIcon', () => ({ SystemIcon: () => null }));
 
-it('shows a Cloud failure without losing the ability to keep downloading locally', async () => {
+it('shows a setup failure without losing the ability to keep downloading locally', async () => {
   const onContinueCloud = jest
     .fn()
     .mockRejectedValue(new OnboardingError('Cloud needs a connection'));
@@ -32,30 +32,30 @@ it('shows a Cloud failure without losing the ability to keep downloading locally
   const screen = render(
     <SlowDownloadSheet visible onContinueCloud={onContinueCloud} onKeepWaiting={onKeepWaiting} />,
   );
-  fireEvent.press(screen.getByText('Continue with Cloud for now'));
+  fireEvent.press(screen.getByText('Continue setup'));
   expect(await screen.findByText('Cloud needs a connection')).toBeTruthy();
   fireEvent.press(screen.getByText('Keep waiting'));
   expect(onKeepWaiting).toHaveBeenCalledTimes(1);
 });
-it('does not start two Cloud transitions on repeated taps', async () => {
+it('does not start two setup transitions on repeated taps', async () => {
   const onContinueCloud = jest.fn().mockReturnValue(new Promise<void>(() => undefined));
   const screen = render(
     <SlowDownloadSheet visible onContinueCloud={onContinueCloud} onKeepWaiting={jest.fn()} />,
   );
-  const button = screen.getByText('Continue with Cloud for now');
+  const button = screen.getByText('Continue setup');
   fireEvent.press(button);
   fireEvent.press(button);
   await waitFor(() => expect(onContinueCloud).toHaveBeenCalledTimes(1));
 });
-it('does not show the text of an unexpected Cloud failure', async () => {
+it('does not show the text of an unexpected setup failure', async () => {
   const onContinueCloud = jest
     .fn()
     .mockRejectedValue(new Error("Calling the 'setValueWithKeyAsync' function has failed"));
   const screen = render(
     <SlowDownloadSheet visible onContinueCloud={onContinueCloud} onKeepWaiting={jest.fn()} />,
   );
-  fireEvent.press(screen.getByText('Continue with Cloud for now'));
-  expect(await screen.findByText('Cloud is unavailable. Try again.')).toBeTruthy();
+  fireEvent.press(screen.getByText('Continue setup'));
+  expect(await screen.findByText('Could not continue setup. Try again.')).toBeTruthy();
   expect(screen.queryByText(/setValueWithKeyAsync/)).toBeNull();
 });
 

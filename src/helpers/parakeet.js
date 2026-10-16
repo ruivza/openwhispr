@@ -6,19 +6,17 @@ const debugLogger = require("./debugLogger");
 const { runSystemTar } = require("./systemTar");
 const {
   downloadFile,
-  verifyFileSha256,
   fetchJson,
   createDownloadSignal,
   createDownloadInProgressError,
   cleanupStaleDownloads,
   checkDiskSpace,
 } = require("./downloadUtils");
-const { validateModelArchive } = require("./modelArchiveIntegrity");
 const ParakeetServerManager = require("./parakeetServer");
 const { getModelsDirForService } = require("./modelDirUtils");
 const { assertParakeetSupported, getParakeetCapability } = require("./parakeetCapability");
 
-const { registryData: modelRegistryData } = require("../models/registryData.js");
+const modelRegistryData = require("../models/modelRegistryData.json");
 const {
   getModelRuntime,
   getRequiredModelFiles,
@@ -30,7 +28,6 @@ function getParakeetModelConfig(modelName) {
   if (!modelInfo) return null;
   return {
     url: modelInfo.downloadUrl,
-    sha256: modelInfo.sha256,
     manifestUrl: modelInfo.manifestUrl,
     size: modelInfo.expectedSizeBytes || modelInfo.sizeMb * 1_000_000,
     expectedSizeBytes: modelInfo.expectedSizeBytes,
@@ -369,7 +366,6 @@ class ParakeetManager {
         const stats = await fsPromises.stat(archivePath);
         // A visibly truncated leftover would just fail extraction forever.
         if (stats.size >= modelConfig.size * 0.9) {
-          if (modelConfig.sha256) await verifyFileSha256(archivePath, modelConfig.sha256, signal);
           archiveReady = true;
           debugLogger.info("Reusing existing archive from previous attempt", {
             archivePath,
@@ -378,13 +374,10 @@ class ParakeetManager {
         } else if (stats.size > 0) {
           await fsPromises.unlink(archivePath).catch(() => {});
         }
-      } catch {
-        await fsPromises.unlink(archivePath).catch(() => {});
-      }
+      } catch {}
 
       if (!archiveReady) {
         await downloadFile(modelConfig.url, archivePath, {
-          expectedSha256: modelConfig.sha256,
           timeout: 600000,
           signal,
           onProgress: (downloadedBytes, totalBytes) => {
@@ -405,9 +398,6 @@ class ParakeetManager {
         });
       }
 
-      if (modelConfig.sha256)
-        await validateModelArchive(archivePath, modelConfig.extractDir, signal);
-      if (signal.aborted) throw Object.assign(new Error("Download cancelled"), { isAbort: true });
       downloadProcess.phase = "installing";
       downloadProcess.percentage = 100;
       if (progressCallback) {
@@ -417,7 +407,7 @@ class ParakeetManager {
       const MAX_EXTRACT_RETRIES = 2;
       for (let attempt = 1; attempt <= MAX_EXTRACT_RETRIES; attempt++) {
         try {
-          await this._extractModel(archivePath, modelName, modelConfig);
+          await this._extractModel(archivePath, modelName);
           break;
         } catch (extractError) {
           debugLogger.warn("Model extraction failed", {
@@ -469,7 +459,7 @@ class ParakeetManager {
 
       return { model: modelName, downloaded: true, path: modelPath, success: true };
     } catch (error) {
-      if (error.isAbort || signal.aborted) {
+      if (error.isAbort) {
         await fsPromises.unlink(archivePath).catch(() => {});
         throw Object.assign(new Error("Download interrupted by user"), {
           code: "DOWNLOAD_CANCELLED",
@@ -509,12 +499,12 @@ class ParakeetManager {
     );
   }
 
-  async _extractModel(archivePath, modelName, modelConfig = getParakeetModelConfig(modelName)) {
+  async _extractModel(archivePath, modelName) {
     const modelsDir = this.getModelsDir();
+    const modelConfig = getParakeetModelConfig(modelName);
     const extractDir = path.join(modelsDir, `temp-extract-${modelName}`);
 
     try {
-      if (modelConfig.sha256) await fsPromises.rm(extractDir, { recursive: true, force: true });
       await fsPromises.mkdir(extractDir, { recursive: true });
       debugLogger.info("Extracting parakeet archive", { archivePath, extractDir });
       await this._runTarExtract(archivePath, extractDir);

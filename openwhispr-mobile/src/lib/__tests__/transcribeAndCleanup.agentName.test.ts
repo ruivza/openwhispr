@@ -102,6 +102,8 @@ describe('transcribeAndCleanup defensive agent path (fused cleanupApplied: true)
     const result = await transcribeAndCleanup({
       audioUri: 'file://a.wav',
       provider: 'cloud',
+      cleanupRoute: { mode: 'openwhispr', scope: 'cleanup' },
+      agentRoute: { mode: 'openwhispr', scope: 'agent' },
       requestContext: 'keyboard',
     });
 
@@ -133,6 +135,8 @@ describe('transcribeAndCleanup defensive agent path (fused cleanupApplied: true)
     const result = await transcribeAndCleanup({
       audioUri: 'file://a.wav',
       provider: 'cloud',
+      cleanupRoute: { mode: 'openwhispr', scope: 'cleanup' },
+      agentRoute: { mode: 'openwhispr', scope: 'agent' },
       requestContext: 'keyboard',
     });
 
@@ -160,6 +164,8 @@ describe('transcribeAndCleanup defensive agent path (fused cleanupApplied: true)
     const result = await transcribeAndCleanup({
       audioUri: 'file://a.wav',
       provider: 'cloud',
+      cleanupRoute: { mode: 'openwhispr', scope: 'cleanup' },
+      agentRoute: { mode: 'openwhispr', scope: 'agent' },
       requestContext: 'keyboard',
     });
 
@@ -187,6 +193,8 @@ describe('transcribeAndCleanup defensive agent path (fused cleanupApplied: true)
     const result = await transcribeAndCleanup({
       audioUri: 'file://a.wav',
       provider: 'cloud',
+      cleanupRoute: { mode: 'openwhispr', scope: 'cleanup' },
+      agentRoute: { mode: 'openwhispr', scope: 'agent' },
       requestContext: 'keyboard',
     });
 
@@ -210,6 +218,8 @@ describe('transcribeAndCleanup defensive agent path (fused cleanupApplied: true)
     await transcribeAndCleanup({
       audioUri: 'file://a.wav',
       provider: 'cloud',
+      cleanupRoute: { mode: 'openwhispr', scope: 'cleanup' },
+      agentRoute: { mode: 'openwhispr', scope: 'agent' },
       requestContext: 'keyboard',
       keyboardTone: 'formal',
     });
@@ -294,6 +304,8 @@ it('keeps the fused cleaned text when the voice assistant returns only thinking'
   const result = await transcribeAndCleanup({
     audioUri: 'file://a.wav',
     provider: 'cloud',
+    cleanupRoute: { mode: 'openwhispr', scope: 'cleanup' },
+    agentRoute: { mode: 'openwhispr', scope: 'agent' },
     requestContext: 'keyboard',
   });
 

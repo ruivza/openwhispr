@@ -17,8 +17,6 @@ import {
   type MobileInferenceScope,
 } from '@/lib/mobileProviders';
 import { getPrivateModeReadiness, getPrivateModeUnavailableMessage } from '@/lib/privateMode';
-import { getProviderCredentialStatus } from '@/services/providers/ProviderCredentials';
-import { getProviderPolicy } from '@/services/providers/ProviderPolicy';
 
 type SpeechScope = 'dictation' | 'upload';
 
@@ -104,6 +102,9 @@ function returnProvider(config: UserConfig | null): InferenceSelection | undefin
 // A provider whose key was removed, or that the organization no longer allows, can't take
 // dictation back. A policy still loading doesn't count against it.
 async function providerUsable(selection: InferenceSelection): Promise<boolean> {
+  // Load provider storage only when restoring a saved provider, not for a local mode switch.
+  const { getProviderPolicy } = await import('@/services/providers/ProviderPolicy');
+  const { getProviderCredentialStatus } = await import('@/services/providers/ProviderCredentials');
   const resolved = resolveMobileInferenceRoute({
     scope: 'dictation',
     selection,

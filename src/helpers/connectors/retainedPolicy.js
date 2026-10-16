@@ -1,6 +1,6 @@
 const fs = require("fs");
 const { hashToken, resolveBootAccountScope } = require("../accountScopeBinding");
-const { parseCanonicalAppVersion } = require("../appVersion");
+const { parseCanonicalAppVersion, normalizeInstalledAppVersion } = require("../appVersion");
 const { isValidPolicyShape } = require("../policyValidation");
 const { readWorkspacePolicyCache } = require("../workspacePolicyCache");
 
@@ -9,7 +9,7 @@ function unavailable(code = "POLICY_UNRESOLVABLE") {
 }
 
 function meetsMinimumVersion(version, minimum) {
-  const current = parseCanonicalAppVersion(version);
+  const current = parseCanonicalAppVersion(normalizeInstalledAppVersion(version));
   const required = parseCanonicalAppVersion(minimum);
   if (!current || !required) return false;
   for (let index = 0; index < 3; index += 1) {

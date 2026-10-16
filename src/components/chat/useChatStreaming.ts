@@ -6,6 +6,7 @@ import { providerSupportsImages } from "../../services/ai/inferenceProviders";
 import { getSettings, useSettingsStore } from "../../stores/settingsStore";
 import { resolveChatStreamingInference } from "../../helpers/dictationAgentInference.js";
 import { describeProviderError } from "../../utils/describeProviderError";
+import { productHelpMetadata } from "../../services/help/productHelp";
 import logger from "../../utils/logger";
 import {
   isAgentAllowed,
@@ -148,6 +149,8 @@ interface UseChatStreamingOptions {
    * onboarding demo answers with suggested times instead).
    */
   nameUnavailableCapabilities?: boolean;
+  /** Disable product-help tools on guided surfaces such as the onboarding demo. */
+  productHelpEnabled?: boolean;
   /**
    * The note's meeting (note chat). Its attendees are listed for the model
    * only in a send that offers connector tools, so recipients come from them.
@@ -217,6 +220,7 @@ export function useChatStreaming({
   searchScope,
   allowConnectors = false,
   nameUnavailableCapabilities = true,
+  productHelpEnabled = true,
   noteMeeting,
   onStreamComplete,
   onResponseContent,
@@ -442,7 +446,7 @@ export function useChatStreaming({
           // Triggers ride in the tool description, so a snippet edit rebuilds the registry.
           const snippetKey = settings.snippets.map((s) => s.trigger).join("|");
           const keepNotesUnchanged = !!options?.keepNotesUnchanged;
-          const cacheKey = `${settings.isSignedIn}-${calendarConnected}-${settings.cloudBackupEnabled}-${scopeKey}-${webSearchEnabled}-${snippetKey}-${connectors?.emailDraftTarget ?? "no-connectors"}-${connectors?.readyConnectorIds.join(",") ?? ""}-${keepNotesUnchanged}`;
+          const cacheKey = `${settings.isSignedIn}-${calendarConnected}-${settings.cloudBackupEnabled}-${scopeKey}-${webSearchEnabled}-${productHelpEnabled}-${snippetKey}-${connectors?.emailDraftTarget ?? "no-connectors"}-${connectors?.readyConnectorIds.join(",") ?? ""}-${keepNotesUnchanged}`;
           if (toolRegistryRef.current?.key === cacheKey) {
             registry = toolRegistryRef.current.registry;
           } else {
@@ -452,6 +456,7 @@ export function useChatStreaming({
               cloudBackupEnabled: settings.cloudBackupEnabled,
               searchScope: scope,
               webSearchEnabled,
+              productHelpEnabled,
               vocabulary: {
                 getDictionary: () => getSettings().customDictionary,
                 updateDictionary: (changes) =>
@@ -751,7 +756,11 @@ export function useChatStreaming({
                                 status: "completed" as const,
                                 result: toolDisplayTexts.get(chunk.callId) ?? chunk.displayText,
                                 ...(chunk.metadata && !isQueryResultData(chunk.metadata)
-                                  ? { metadata: chunk.metadata }
+                                  ? {
+                                      metadata:
+                                        productHelpMetadata(tc.name, chunk.metadata) ??
+                                        chunk.metadata,
+                                    }
                                   : {}),
                               }
                             : tc
@@ -866,6 +875,7 @@ export function useChatStreaming({
       inferenceScope,
       allowConnectors,
       nameUnavailableCapabilities,
+      productHelpEnabled,
       t,
       setMessages,
       onStreamComplete,

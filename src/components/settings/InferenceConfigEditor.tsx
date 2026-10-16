@@ -1,4 +1,3 @@
-import { useRegistryVersion } from "../../hooks/useRegistryVersion";
 import { useCallback } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useTranslation } from "react-i18next";
@@ -59,7 +58,6 @@ export default function InferenceConfigEditor({
   onModeChange,
   allowedModes,
 }: InferenceConfigEditorProps) {
-  useRegistryVersion();
   const { t } = useTranslation();
   const policyState = usePolicySnapshot();
   const config = useSettingsStore(

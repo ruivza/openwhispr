@@ -62,6 +62,8 @@ async function verifyCandidate(root, { git, originalSha }) {
     "test/services/analyticsService.test.js",
     "test/helpers/settingsStoreTelemetryDisabled.test.js",
     "test/helpers/updater.test.js",
+    "test/helpers/forkProductHelpIpc.test.js",
+    "test/scripts/verifyPackagedStartup.test.js",
   ];
   if (git(["diff", "--name-only", originalSha, "--", "openwhispr-mobile/"]).stdout.trim()) {
     tests.push(
@@ -121,13 +123,13 @@ async function syncUpstream(options = {}) {
       env.GIT_CONFIG_VALUE_2 = `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`;
     }
     const checkout = path.join(temporary, "checkout");
+    // Upstream-only blobs must not be fetched lazily from the fork's promisor remote.
     command(
       "git",
       [
         "clone",
         "--no-hardlinks",
         "--no-checkout",
-        "--filter=blob:none",
         "--single-branch",
         "--branch",
         "main",

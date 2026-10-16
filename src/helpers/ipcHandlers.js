@@ -22,7 +22,9 @@ const { createLocalConnectorProfile } = require("./connectors/localProfile");
 const { getLocalMcpConfig } = require("./localMcpConfig");
 const { createRetainedConnectorPolicyReader } = require("./connectors/retainedPolicy");
 const accountScopeBinding = require("./accountScopeBinding");
+const { registerProductHelpIpc, remoteHelpPolicyState } = require("./productHelp");
 const { createCloudApiRequestHandler } = require("./cloudApiRequest");
+const { MetaActivation } = require("./metaActivation");
 const { decodeLeaderboardPngDataUrl, leaderboardImageFilename } = require("./leaderboardImage");
 const { withPolicyRequestHeaders } = require("./policyRequestHeaders");
 const {
@@ -58,10 +60,10 @@ const { createNoteAttendeesLookup, searchContacts } = require("./connectors/cont
 // The renderer's ModelRegistry is not main-loadable; the raw registry data is
 // packaged, and the route resolver only needs {id, baseUrl} per provider.
 const transcriptionProviderBaseUrls = () =>
-  require("../models/registryData.js").registryData.transcriptionProviders;
+  require("../models/modelRegistryData.json").transcriptionProviders;
 // Classified errors show the provider's display name; routes only carry its id.
 const transcriptionProviderName = (id) =>
-  require("../models/registryData.js").registryData.transcriptionProviders.find((p) => p.id === id)
+  require("../models/modelRegistryData.json").transcriptionProviders.find((p) => p.id === id)
     ?.name || id;
 // ipcMain.handle keeps only the message when a promise rejects, dropping custom
 // props — proxy handlers return the classified fields so the renderer can
@@ -113,11 +115,7 @@ const HyprlandShortcutManager = require("./hyprlandShortcut");
 const AssemblyAiStreaming = require("./assemblyAiStreaming");
 const { i18nMain, changeLanguage } = require("./i18nMain");
 const DeepgramStreaming = require("./deepgramStreaming");
-const {
-  GeminiLiveStreaming,
-  GEMINI_LIVE_MODEL,
-  resolveGeminiLiveModel,
-} = require("./geminiLiveStreaming");
+const { GeminiLiveStreaming, GEMINI_LIVE_MODEL } = require("./geminiLiveStreaming");
 const CortiStreaming = require("./cortiStreaming");
 const OpenAIRealtimeStreaming = require("./openaiRealtimeStreaming");
 const { getCortiToken } = require("./cortiAuth");
@@ -2279,6 +2277,7 @@ class IPCHandlers {
       );
       // this.connectorManager?.accountChanged(); // Connector profile does not follow cloud accounts.
       void this.connectorManager?.notifyStatusChanged();
+      void this.metaActivation?.flush();
       return { success: true };
     });
 
@@ -2318,6 +2317,7 @@ class IPCHandlers {
           //   erasingDevice: options?.erasingDevice === true,
           // });
           const result = this.databaseManager.deleteAccountData(accountId);
+          this.metaActivation?.purge(accountId);
           this.notifyVectorChanges();
           for (const noteId of result.deletedNoteIds) {
             this._asyncMirrorDelete(noteId);
@@ -3078,6 +3078,9 @@ class IPCHandlers {
           mainWindow.showInactive();
         } else {
           mainWindow.blur();
+          // On Linux blur() leaves X focus on the pill, where the assistant panel
+          // took it, so the paste would land in the panel.
+          if (process.platform === "linux") this.windowManager.returnLinuxKeyboardFocus();
           await new Promise((resolve) => setTimeout(resolve, 80));
         }
       }
@@ -3151,8 +3154,8 @@ class IPCHandlers {
       // Promise cannot cross Electron's IPC boundary, though, and renderer
       // callers need to know whether text was pasted, but not the delayed
       // clipboard restoration promise. Successful platform paths predate the
-      // explicit `pasted` outcome; only the clipboard-only fallback and a paste
-      // held back for still-held modifiers (which carries a `reason`) set false.
+      // explicit `pasted` outcome; only the clipboard-only fallback and a held-back
+      // paste (held modifiers or a missing or failed wl-copy, which carries a `reason`) set false.
       return {
         success: true,
         pasted,
@@ -4072,6 +4075,16 @@ class IPCHandlers {
         const { describeError } = require("./connectors/errorSummary");
         const { errorName, errorCode } = describeError(e);
         errors.push(`Connector revoke: ${errorCode ?? errorName}`);
+      }
+
+      try {
+        this.metaActivation?.dispose();
+        this.metaActivation = null;
+        const activationPath = path.join(app.getPath("userData"), "meta-activation.db");
+        for (const suffix of ["", "-wal", "-shm"])
+          fs.rmSync(activationPath + suffix, { force: true });
+      } catch (e) {
+        errors.push(`Activation data cleanup: ${e.message}`);
       }
 
       // Close DB connection before deleting the file
@@ -6129,6 +6142,10 @@ class IPCHandlers {
       if (!fork.officialAccountEnabled)
         return { success: true, tokenState: { success: true, token: null, generation: 0 } };
       try {
+        await Promise.race([
+          this.metaActivation?.close(),
+          new Promise((resolve) => setTimeout(resolve, 1500)),
+        ]).catch(() => {});
         const tokenState = tokenStore.clear();
         const win = BrowserWindow.fromWebContents(event.sender);
         if (win) {
@@ -6272,6 +6289,54 @@ class IPCHandlers {
       tokenStore,
       logger: debugLogger,
     });
+    this.metaActivation = null;
+    // This fork does not collect marketing activation events, even locally.
+    if (fork.hostedServicesEnabled) {
+      try {
+        const ActivationDatabase = require("better-sqlite3");
+        const activationDb = new ActivationDatabase(
+          path.join(app.getPath("userData"), "meta-activation.db")
+        );
+        activationDb.pragma("foreign_keys = ON");
+        this.metaActivation = new MetaActivation({
+          db: activationDb,
+          getScope: () =>
+            accountScopeBinding.resolveActiveAccountScope({
+              ...tokenStore.getState(),
+              binding: accountScopeBinding.read(),
+            }),
+          request: createCloudApiRequestHandler({
+            getApiUrl,
+            getAppVersion: () => app.getVersion(),
+            tokenStore,
+            proxyFetch: (url, init) =>
+              proxyFetch(url, { ...init, signal: AbortSignal.timeout(10_000) }),
+          }),
+        });
+        this.metaActivation.start();
+      } catch {
+        // Marketing bookkeeping must never prevent ordinary dictation/startup.
+        debugLogger.warn("Activation storage unavailable");
+      }
+    }
+    ipcMain.handle("activation-close", async () => {
+      if (!this.metaActivation) return null;
+      await Promise.race([
+        this.metaActivation.close(),
+        new Promise((resolve) => setTimeout(resolve, 1500)),
+      ]).catch(() => {});
+      return null;
+    });
+    ipcMain.handle("activation-begin", () => this.metaActivation?.begin() ?? null);
+    ipcMain.handle("activation-stop", (_event, id) => {
+      if (typeof id === "string") return this.metaActivation?.stopCapture(id) ?? null;
+      return null;
+    });
+    ipcMain.handle(
+      "activation-finish",
+      (_event, id, words) => this.metaActivation?.finish(id, words) ?? null
+    );
+    ipcMain.handle("activation-cancel", (_event, id) => this.metaActivation?.cancel(id) ?? null);
     const workspacePolicyManager = createWorkspacePolicyManager({
       cachePath: path.join(app.getPath("userData"), "workspace-policy.json"),
       getApiUrl,
@@ -6281,23 +6346,53 @@ class IPCHandlers {
       broadcast: (snapshot) => broadcastToWindows("workspace-policy-changed", snapshot),
       logger: debugLogger,
     });
+    const localConnectorProfile = createLocalConnectorProfile({
+      dir: path.join(app.getPath("userData"), "connectors"),
+    });
+    const getRetainedConnectorPolicy = createRetainedConnectorPolicyReader({
+      cachePath: path.join(app.getPath("userData"), "workspace-policy.json"),
+      // Read only the origin needed to match an existing organization cache.
+      // Cloud requests continue using the disabled getApiUrl above.
+      getApiUrl: () =>
+        process.env.OPENWHISPR_API_URL ||
+        process.env.VITE_OPENWHISPR_API_URL ||
+        runtimeEnv.VITE_OPENWHISPR_API_URL ||
+        "",
+      getTokenState: () => tokenStore.getState(),
+      getAccountBinding: () => accountScopeBinding.read(),
+      getAppVersion: () => app.getVersion(),
+    });
+    registerProductHelpIpc({
+      ipcMain,
+      fetch: proxyFetch,
+      // Public documentation shares the local connector identity and retained
+      // policy, without restoring an official login or sending its credentials.
+      canLookup: createLocalConnectorPolicyResolver({
+        getAccountScope: localConnectorProfile.getScope,
+        getPolicySnapshot: getRetainedConnectorPolicy,
+        classifySnapshot: (snapshot) => remoteHelpPolicyState(snapshot, app.getVersion()),
+      }),
+      getBasics: () => ({
+        // checkAccess reads the cached permission verdict; it never requests access.
+        systemAudioPermission:
+          process.platform === "darwin"
+            ? this.audioTapManager?.checkAccess()?.status || "unknown"
+            : "unknown",
+        platform: process.platform,
+        version: app.getVersion(),
+        microphonePermission:
+          process.platform === "linux"
+            ? "unknown"
+            : systemPreferences.getMediaAccessStatus("microphone"),
+        accessibilityPermission:
+          process.platform === "darwin"
+            ? systemPreferences.isTrustedAccessibilityClient(false)
+              ? "granted"
+              : "not-granted"
+            : "not-applicable",
+      }),
+    });
     if (this.connectorManager) {
-      const localConnectorProfile = createLocalConnectorProfile({
-        dir: path.join(app.getPath("userData"), "connectors"),
-      });
-      const getRetainedConnectorPolicy = createRetainedConnectorPolicyReader({
-        cachePath: path.join(app.getPath("userData"), "workspace-policy.json"),
-        // Read only the origin needed to match an existing organization cache.
-        // Cloud requests continue using the disabled getApiUrl above.
-        getApiUrl: () =>
-          process.env.OPENWHISPR_API_URL ||
-          process.env.VITE_OPENWHISPR_API_URL ||
-          runtimeEnv.VITE_OPENWHISPR_API_URL ||
-          "",
-        getTokenState: () => tokenStore.getState(),
-        getAccountBinding: () => accountScopeBinding.read(),
-        getAppVersion: () => app.getVersion(),
-      });
       registerConnectorIpc({
         ipcMain,
         manager: this.connectorManager,
@@ -6482,6 +6577,10 @@ class IPCHandlers {
           sttDetectedLanguageConfidence: opts.sttDetectedLanguageConfidence,
           sttDetectedLanguageAudioSeconds: opts.sttDetectedLanguageAudioSeconds,
           sttDetectedLanguageStatus: opts.sttDetectedLanguageStatus,
+          orukeetLanguageRouting: opts.orukeetLanguageRouting
+            ? JSON.stringify(opts.orukeetLanguageRouting)
+            : undefined,
+          orukeetCleanup: opts.orukeetCleanup ? JSON.stringify(opts.orukeetCleanup) : undefined,
         };
 
         debugLogger.debug("Cloud transcribe request", { audioSize: audioData.length }, "cloud-api");
@@ -8703,6 +8802,7 @@ class IPCHandlers {
         options.mode,
         options.model,
         options.baseUrl,
+        options.pipelineOptions,
         readsSavedKey ? credentialGeneration : null,
         provider === "openai-realtime"
           ? OpenAIRealtimeStreaming.normalizeLanguage(options.language)
@@ -8746,6 +8846,9 @@ class IPCHandlers {
           provider === "orukeet"
             ? new OrukeetStreaming(isCloud ? MANAGED_STREAM_OPTIONS : {})
             : new OpenAIRealtimeStreaming();
+        if (provider === "orukeet")
+          streaming.onUsageError = (metadata) =>
+            debugLogger.error("Combined cleanup usage could not be recorded", metadata);
         setupDictationCallbacks(streaming, event);
         // Assign before the token fetch (a real network round trip) so
         // dictation-realtime-send has a live instance to buffer into instead
@@ -8762,6 +8865,7 @@ class IPCHandlers {
                 proxyFetch,
                 tokenStore,
                 withPolicyHeaders,
+                pipelineOptions: options.pipelineOptions,
               });
             } else {
               await streaming.connect({
@@ -9483,18 +9587,7 @@ class IPCHandlers {
       return warmup;
     });
 
-    let dictationStartInProgress = false;
-    let dictationBufferStartAudio = false;
-    let dictationStartAudio = [];
-    let dictationStartAudioBytes = 0;
-    const DICTATION_START_AUDIO_MAX = 3 * 16000 * 2;
-
     ipcMain.handle("dictation-realtime-start", async (event, options = {}) => {
-      if (dictationStartInProgress) return { success: false, error: "Operation in progress" };
-      dictationStartInProgress = true;
-      // OpenAI and Tinfoil finish setup without audio. Keep the first frames
-      // away from an older warmup while a different model is being selected.
-      dictationBufferStartAudio = options.provider !== "orukeet";
       try {
         clearDictationIdleTimer();
         this._dictationPreviewEnabled = !!options.preview;
@@ -9504,27 +9597,13 @@ class IPCHandlers {
         ) {
           await connectDictationStreaming(event, options);
         }
-        for (const buffer of dictationStartAudio) this._dictationStreaming?.sendAudio(buffer);
         return { success: true };
       } catch (err) {
         return streamingStartFailure(err);
-      } finally {
-        dictationStartInProgress = false;
-        dictationBufferStartAudio = false;
-        dictationStartAudio = [];
-        dictationStartAudioBytes = 0;
       }
     });
 
     ipcMain.on("dictation-realtime-send", (_event, buffer) => {
-      if (dictationBufferStartAudio) {
-        const bytes = Buffer.from(buffer);
-        if (dictationStartAudioBytes + bytes.length <= DICTATION_START_AUDIO_MAX) {
-          dictationStartAudio.push(bytes);
-          dictationStartAudioBytes += bytes.length;
-        }
-        return;
-      }
       this._dictationStreaming?.sendAudio(Buffer.from(buffer));
     });
 
@@ -9794,6 +9873,8 @@ class IPCHandlers {
             sttDetectedLanguageConfidence: opts.sttDetectedLanguageConfidence,
             sttDetectedLanguageAudioSeconds: opts.sttDetectedLanguageAudioSeconds,
             sttDetectedLanguageStatus: opts.sttDetectedLanguageStatus,
+            orukeetLanguageRouting: opts.orukeetLanguageRouting,
+            orukeetCleanup: opts.orukeetCleanup,
             audioDurationMs: opts.audioDurationMs,
             // audioSizeBytes: opts.audioSizeBytes,
             // audioFormat: opts.audioFormat,
@@ -10042,6 +10123,8 @@ class IPCHandlers {
               sttDetectedLanguageConfidence: opts.sttDetectedLanguageConfidence,
               sttDetectedLanguageAudioSeconds: opts.sttDetectedLanguageAudioSeconds,
               sttDetectedLanguageStatus: opts.sttDetectedLanguageStatus,
+              orukeetLanguageRouting: opts.orukeetLanguageRouting,
+              orukeetCleanup: opts.orukeetCleanup,
               // audioSizeBytes: opts.audioSizeBytes,
               // audioFormat: opts.audioFormat,
               // clientTotalMs: opts.clientTotalMs,
@@ -11514,6 +11597,7 @@ class IPCHandlers {
     let geminiStartAudioBytes = 0;
     // Match the client's three-second cold-start bound. A model-changing start
     // owns these frames, even while a previous warm handshake is finishing.
+    // A credential-changing start must retain them across the old socket too.
     const GEMINI_START_AUDIO_MAX = 3 * 16000 * 2;
     // One handshake at a time. A start that raced an in-flight warmup used to
     // clear the cold-start buffer, spend a second single-use managed token and
@@ -11539,15 +11623,10 @@ class IPCHandlers {
       return streaming;
     };
 
-    // Managed tokens are constrained to the server's existing model. BYOK can
-    // select newly published compatible models, each requiring its own socket.
-    const geminiConnectionModel = resolveGeminiLiveModel;
-    // A warm socket cannot cross credentials, modes, or selected models.
+    // What a Gemini connection authenticated with: a managed one never serves a
+    // BYOK start or the reverse, and a BYOK one is not reused after a key save.
     const geminiConnectionKey = (options) =>
-      JSON.stringify([
-        options.mode === "byok" ? `byok:${credentialGeneration}` : "managed",
-        geminiConnectionModel(options),
-      ]);
+      options.mode === "byok" ? `byok:${credentialGeneration}` : "managed";
 
     const connectGeminiStreaming = (event, options) => {
       if (geminiConnectInFlight) return geminiConnectInFlight;
@@ -11563,7 +11642,6 @@ class IPCHandlers {
         const token = await fetchRealtimeToken(event, tokenOptions);
         await streaming.connect({
           ...options,
-          model: geminiConnectionModel(options),
           token,
           refreshToken: () => fetchRealtimeToken(event, tokenOptions),
         });

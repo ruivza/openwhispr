@@ -144,11 +144,11 @@ export function useFileUpload(options: UseFileUploadOptions = {}) {
         await assertProviderAcceptsFile(file, extension);
       }
 
-      // On-device Opus decoding isn't supported yet; the cloud transcriber
-      // decodes Opus, so route private-mode Opus uploads there instead.
+      // On-device Opus decoding isn't supported yet; an explicitly selected BYOK
+      // upload provider may decode it without enabling official hosted services.
       if (transcriptionProvider === 'local' && isOggOpus(file.name, file.mimeType, file.uri)) {
         throw new Error(
-          "Opus audio can't be transcribed on this iPhone yet. In Account → AI Models, turn off Private Mode or set Uploads to OpenWhispr Cloud, then try again.",
+          "Opus audio can't be transcribed on this iPhone yet. Choose an upload provider that supports Opus in Account → AI Models, or convert the file to WAV, MP3, or M4A.",
         );
       }
 

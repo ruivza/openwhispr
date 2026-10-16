@@ -1,5 +1,4 @@
 import { chooseOnboardingMode } from '../onboardingMode';
-import { OnboardingError } from '../onboardingErrors';
 
 jest.mock('@/lib/sentry', () => ({ Sentry: { captureException: jest.fn() } }));
 const mockUpdateConfig = jest.fn();
@@ -54,24 +53,26 @@ beforeEach(() => {
   mockChooseMode.mockResolvedValue(undefined);
   mockEnsureSession.mockResolvedValue(undefined);
 });
-it('retries anonymous authentication before allowing Cloud', async () => {
-  mockEnsureSession.mockImplementationOnce(async () => {
-    mockUser = { id: 'anon', isAnonymous: true };
-  });
+it('maps a legacy Cloud selection to local setup without opening an account session', async () => {
   await chooseOnboardingMode('cloud', 'privacy-mode');
-  expect(mockChooseMode).toHaveBeenCalledWith('cloud', 'privacy-mode');
+  expect(mockEnsureSession).not.toHaveBeenCalled();
+  expect(mockChooseMode).toHaveBeenCalledWith('private', 'privacy-mode');
   expect(mockUpdateConfig).toHaveBeenCalledWith({
-    defaultMode: 'cloud',
-    inference: { dictation: { mode: 'openwhispr' } },
+    defaultMode: 'private',
+    inference: {
+      dictation: { mode: 'local' },
+      upload: { mode: 'local' },
+      cleanup: { mode: 'local' },
+    },
+    pinnedInference: ['upload', 'cleanup'],
   });
 });
-it('rejects Cloud without a session from download fallbacks too', async () => {
+it('keeps a legacy download fallback local without a session', async () => {
   mockCurrentStep = 'private-download';
-  const attempt = chooseOnboardingMode('cloud', 'private-download');
-  await expect(attempt).rejects.toThrow('connection');
-  await expect(attempt).rejects.toBeInstanceOf(OnboardingError);
-  expect(mockUpdateConfig).not.toHaveBeenCalled();
-  expect(mockChooseMode).not.toHaveBeenCalled();
+  await chooseOnboardingMode('cloud', 'private-download');
+  expect(mockEnsureSession).not.toHaveBeenCalled();
+  expect(mockChooseMode).toHaveBeenCalledWith('private', 'private-download');
+  expect(mockUpdateConfig.mock.calls[0][0].defaultMode).toBe('private');
 });
 it('does not advance or change the active mode after a failed save', async () => {
   mockUpdateConfig.mockImplementationOnce(async () => {
@@ -87,37 +88,42 @@ it('does not change the mode for a stale screen callback', async () => {
   expect(mockUpdateConfig).not.toHaveBeenCalled();
 });
 
-it('restores Local if a Cloud choice saves configuration but fails to save onboarding progress', async () => {
+it('restores Local if a legacy choice fails to save onboarding progress', async () => {
   mockUser = { id: 'anon', isAnonymous: true };
   mockCurrentStep = 'private-download';
   mockChooseMode.mockRejectedValueOnce(new Error('Keychain unavailable'));
   await expect(chooseOnboardingMode('cloud', 'private-download')).rejects.toThrow(
     'Keychain unavailable',
   );
-  expect(mockUpdateConfig).toHaveBeenLastCalledWith({ defaultMode: 'private' });
+  expect(mockUpdateConfig).toHaveBeenLastCalledWith({
+    defaultMode: 'private',
+    inference: undefined,
+    pinnedInference: undefined,
+    privateModeReturn: undefined,
+  });
   expect(mockResetMode).toHaveBeenLastCalledWith('private');
 });
 
-it('refuses Cloud for a guest at the mode choice with a message meant for them', async () => {
+it('lets a guest continue local setup without account access', async () => {
   mockGuest = true;
-  await expect(chooseOnboardingMode('cloud', 'privacy-mode')).rejects.toBeInstanceOf(
-    OnboardingError,
-  );
-  expect(mockUpdateConfig).not.toHaveBeenCalled();
+  await chooseOnboardingMode('cloud', 'privacy-mode');
+  expect(mockEnsureSession).not.toHaveBeenCalled();
+  expect(mockChooseMode).toHaveBeenCalledWith('private', 'privacy-mode');
 });
 
 // Guests can't open a session during setup. Refusing Cloud here too would leave a guest whose
 // download failed with no way to finish, so the choice is saved for after sign-in, as before.
-it('lets a guest leave a stuck download for Cloud', async () => {
+// This fork keeps the escape hatch but always continues local setup.
+it('lets a guest leave a stuck download while keeping local routing', async () => {
   mockGuest = true;
   mockCurrentStep = 'private-download';
   await chooseOnboardingMode('cloud', 'private-download');
   expect(mockEnsureSession).not.toHaveBeenCalled();
-  expect(mockUpdateConfig).toHaveBeenCalledWith({
-    defaultMode: 'cloud',
-    inference: { dictation: { mode: 'openwhispr' } },
+  expect(mockUpdateConfig.mock.calls[0][0]).toMatchObject({
+    defaultMode: 'private',
+    inference: { dictation: { mode: 'local' } },
   });
-  expect(mockChooseMode).toHaveBeenCalledWith('cloud', 'private-download');
+  expect(mockChooseMode).toHaveBeenCalledWith('private', 'private-download');
 });
 
 // A replayed onboarding pick must also move a Providers dictation route, or the
@@ -132,14 +138,94 @@ it('moves the dictation route with the chosen mode and restores both on failure'
   );
   expect(mockUpdateConfig).toHaveBeenNthCalledWith(1, {
     defaultMode: 'private',
-    inference: { dictation: { mode: 'local' } },
-    pinnedInference: undefined,
+    inference: {
+      dictation: { mode: 'local' },
+      upload: { mode: 'local' },
+      cleanup: { mode: 'local' },
+    },
+    pinnedInference: ['upload', 'cleanup'],
   });
   expect(mockUpdateConfig).toHaveBeenLastCalledWith({
     defaultMode: 'providers',
     inference,
     pinnedInference: ['upload'],
+    privateModeReturn: undefined,
   });
+});
+
+// Choosing Local in setup keeps uploads and cleanup on this iPhone, even for a signed-in account,
+// whose Local Mode defaults would send them to Cloud. They are automatic pins, not the user's own.
+it('keeps uploads and cleanup on this iPhone when setup picks Local', async () => {
+  mockUser = { id: 'u', isAnonymous: false };
+  mockConfig = {
+    defaultMode: 'cloud',
+    inference: { dictation: { mode: 'openwhispr' }, cleanup: { mode: 'openwhispr' } },
+    rememberedInference: { upload: { local: { mode: 'local', modelId: 'whisper-base' } } },
+  };
+  await chooseOnboardingMode('private', 'privacy-mode');
+  expect(mockUpdateConfig.mock.calls[0][0]).toMatchObject({
+    defaultMode: 'private',
+    inference: {
+      dictation: { mode: 'local' },
+      upload: { mode: 'local', modelId: 'whisper-base' },
+      cleanup: { mode: 'local' },
+    },
+    pinnedInference: ['upload', 'cleanup'],
+  });
+});
+
+it.each([
+  ['On-Device', { mode: 'local', modelId: 'parakeet-v2' }],
+  [
+    'provider',
+    {
+      mode: 'providers',
+      providerId: 'custom',
+      modelId: 'saved-model',
+      endpoint: 'https://models.example.com/v1',
+      credentialRef: 'saved-key',
+    },
+  ],
+])('keeps a saved %s choice when setup picks Local', async (_label, saved) => {
+  mockConfig = { defaultMode: 'cloud', inference: { upload: saved, cleanup: saved } };
+  await chooseOnboardingMode('private', 'privacy-mode');
+  const { inference, pinnedInference } = mockUpdateConfig.mock.calls[0][0];
+  expect(inference.upload).toEqual(saved);
+  expect(inference.cleanup).toEqual(saved);
+  expect(pinnedInference).toEqual([]);
+});
+
+// Going back to Cloud in setup changes the mode, which releases what Local held.
+// Legacy Cloud callbacks in this fork leave the local mode and its pins intact.
+it('keeps local pins when an old Cloud callback is replayed', async () => {
+  mockUser = { id: 'u', isAnonymous: false };
+  mockConfig = {
+    defaultMode: 'private',
+    inference: {
+      dictation: { mode: 'local' },
+      upload: { mode: 'local' },
+      cleanup: { mode: 'local' },
+    },
+    pinnedInference: ['upload', 'cleanup'],
+  };
+  await chooseOnboardingMode('cloud', 'privacy-mode');
+  expect(mockUpdateConfig.mock.calls[0][0]).toEqual({
+    defaultMode: 'private',
+    inference: {
+      dictation: { mode: 'local' },
+      upload: { mode: 'local' },
+      cleanup: { mode: 'local' },
+    },
+    pinnedInference: ['upload', 'cleanup'],
+  });
+});
+
+it('keeps a saved cleanup when a legacy Cloud callback resumes locally', async () => {
+  mockUser = { id: 'u', isAnonymous: false };
+  const cleanup = { mode: 'local' };
+  mockConfig = { defaultMode: 'cloud', inference: { dictation: { mode: 'openwhispr' }, cleanup } };
+  await chooseOnboardingMode('cloud', 'privacy-mode');
+  expect(mockUpdateConfig.mock.calls[0][0].inference.cleanup).toEqual(cleanup);
 });
 
 // A new identity there would read as an account switch and wipe the synced account's notes.
@@ -148,17 +234,41 @@ describe('on a device that synced an account, signed out', () => {
     mockAccountHistory = true;
   });
 
-  it('refuses Cloud at the mode choice without opening a session', async () => {
-    const attempt = chooseOnboardingMode('cloud', 'privacy-mode');
-    await expect(attempt).rejects.toThrow('Cloud needs you signed in');
+  it('continues local setup without opening a new session', async () => {
+    await chooseOnboardingMode('cloud', 'privacy-mode');
     expect(mockEnsureSession).not.toHaveBeenCalled();
-    expect(mockUpdateConfig).not.toHaveBeenCalled();
+    expect(mockChooseMode).toHaveBeenCalledWith('private', 'privacy-mode');
   });
 
-  it('saves Cloud for after sign-in when leaving a stuck download', async () => {
+  it('leaves a stuck download locally without a new identity', async () => {
     mockCurrentStep = 'private-download';
     await chooseOnboardingMode('cloud', 'private-download');
     expect(mockEnsureSession).not.toHaveBeenCalled();
-    expect(mockChooseMode).toHaveBeenCalledWith('cloud', 'private-download');
+    expect(mockChooseMode).toHaveBeenCalledWith('private', 'private-download');
+  });
+});
+
+// Failed progress persistence must restore the BYOK round-trip state as well as its active route.
+it('restores the private-mode return selections after progress persistence fails', async () => {
+  const saved = {
+    mode: 'providers',
+    providerId: 'custom',
+    modelId: 'saved-model',
+    endpoint: 'https://models.example.com/v1',
+    credentialRef: 'saved-key',
+  };
+  const privateModeReturn = { pinned: { cleanup: saved } };
+  mockConfig = { defaultMode: 'private', privateModeReturn };
+  mockChooseMode.mockRejectedValueOnce(new Error('Keychain unavailable'));
+
+  await expect(chooseOnboardingMode('private', 'privacy-mode')).rejects.toThrow(
+    'Keychain unavailable',
+  );
+
+  expect(mockUpdateConfig).toHaveBeenLastCalledWith({
+    defaultMode: 'private',
+    inference: undefined,
+    pinnedInference: undefined,
+    privateModeReturn,
   });
 });

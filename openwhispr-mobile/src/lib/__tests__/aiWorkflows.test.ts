@@ -1,4 +1,4 @@
-import { workflowSummary } from '@/lib/aiWorkflows';
+import { unsetSelection, workflowSummary } from '@/lib/aiWorkflows';
 import type { UserConfig } from '@/types';
 
 function config(overrides: Partial<UserConfig> = {}): UserConfig {
@@ -6,15 +6,44 @@ function config(overrides: Partial<UserConfig> = {}): UserConfig {
 }
 
 describe('workflowSummary for Text Cleanup', () => {
+  // With nothing saved, Local Mode cleans on OpenWhispr Cloud for a signed-in account and on this
+  // phone otherwise, since a separate Cloud pass needs a real account.
   it.each([
-    ['nothing saved', undefined],
-    ['OpenWhispr Cloud', { mode: 'openwhispr' as const }],
-  ])('is skipped in On-Device mode with %s saved', (_label, cleanup) => {
-    const saved = config({ inference: cleanup ? { cleanup } : {} });
-    expect(workflowSummary(saved, 'cleanup', 'private')).toBe('Skipped');
+    ['account', 'On-Device'],
+    ['session', 'On-Device'],
+    ['none', 'On-Device'],
+  ] as const)('with nothing saved in Local Mode and %s access, runs %s', (cloudAccess, label) => {
+    expect(workflowSummary(config({}), 'cleanup', 'private', { cloudAccess })).toBe(label);
   });
 
-  it('names the provider saved for cleanup in On-Device mode, which cleans there', () => {
+  it('normalizes a saved hosted cleanup to On-Device even for a legacy account', () => {
+    const saved = config({ inference: { cleanup: { mode: 'openwhispr' } } });
+    expect(workflowSummary(saved, 'cleanup', 'private', { cloudAccess: 'account' })).toBe(
+      'On-Device',
+    );
+  });
+
+  // Local Mode dictates on this phone, so Cloud cleanup is a separate pass that needs an account.
+  it.each(['session', 'none'] as const)(
+    'keeps a saved hosted cleanup On-Device with %s access',
+    (cloudAccess) => {
+      const saved = config({ inference: { cleanup: { mode: 'openwhispr' } } });
+      expect(workflowSummary(saved, 'cleanup', 'private', { cloudAccess })).toBe('On-Device');
+      expect(
+        workflowSummary({ ...saved, defaultMode: 'cloud' }, 'cleanup', 'cloud', { cloudAccess }),
+      ).toBe('On-Device');
+    },
+  );
+
+  it('is skipped in Local Mode when Apple Intelligence cannot run', () => {
+    expect(
+      workflowSummary(config({}), 'cleanup', 'private', {
+        onDeviceUnavailable: 'Not supported on this iPhone',
+      }),
+    ).toBe('Skipped · Not supported on this iPhone');
+  });
+
+  it('names a cleanup provider saved in Local Mode', () => {
     const saved = config({
       inference: { cleanup: { mode: 'providers', providerId: 'openai', modelId: 'gpt-5-mini' } },
     });
@@ -30,20 +59,31 @@ describe('workflowSummary for Text Cleanup', () => {
   });
 
   it.each(['private', 'cloud'] as const)(
-    'says why saved On-Device cleanup cannot run in %s mode',
+    'says why saved On-Device cleanup is skipped in %s mode',
     (mode) => {
       const saved = config({ defaultMode: mode, inference: { cleanup: { mode: 'local' } } });
       expect(
         workflowSummary(saved, 'cleanup', mode, { onDeviceUnavailable: 'Apple Intelligence off' }),
-      ).toBe('On-Device · Apple Intelligence off');
+      ).toBe('Skipped · Apple Intelligence off');
     },
   );
 
-  it('ignores On-Device availability for a cleanup that does not run on the phone', () => {
+  it('ignores On-Device availability for a cleanup provider saved in Local Mode', () => {
+    const saved = config({
+      inference: { cleanup: { mode: 'providers', providerId: 'openai', modelId: 'gpt-5-mini' } },
+    });
+    expect(
+      workflowSummary(saved, 'cleanup', 'private', {
+        onDeviceUnavailable: 'Apple Intelligence off',
+      }),
+    ).toBe('OpenAI');
+  });
+
+  it('checks On-Device availability after normalizing a legacy hosted cleanup', () => {
     const saved = config({ defaultMode: 'cloud', inference: { cleanup: { mode: 'openwhispr' } } });
     expect(
       workflowSummary(saved, 'cleanup', 'cloud', { onDeviceUnavailable: 'Apple Intelligence off' }),
-    ).toBe('OpenWhispr Cloud');
+    ).toBe('Skipped · Apple Intelligence off');
   });
 
   it.each(['private', 'cloud', 'providers'] as const)(
@@ -70,3 +110,39 @@ describe('workflowSummary for Text Cleanup', () => {
     );
   });
 });
+
+describe('workflowSummary for Uploads', () => {
+  // With nothing saved, Local Mode uploads to OpenWhispr Cloud whenever there is a session.
+  it.each([
+    ['account', 'On-Device'],
+    ['session', 'On-Device'],
+    ['none', 'On-Device'],
+  ] as const)('with nothing saved in Local Mode and %s access, runs %s', (cloudAccess, label) => {
+    expect(workflowSummary(config({}), 'upload', 'private', { cloudAccess })).toBe(label);
+  });
+
+  it('names an upload provider saved in Local Mode', () => {
+    const saved = config({
+      inference: { upload: { mode: 'providers', providerId: 'openai', modelId: 'whisper-1' } },
+    });
+    expect(workflowSummary(saved, 'upload', 'private')).toBe('OpenAI');
+  });
+
+  it('keeps dictation On-Device in Local Mode whatever is saved', () => {
+    const saved = config({ inference: { dictation: { mode: 'openwhispr' } } });
+    expect(workflowSummary(saved, 'dictation', 'private', { cloudAccess: 'account' })).toBe(
+      'On-Device',
+    );
+  });
+});
+
+// A stale official session never changes the destination of an unsaved workflow.
+it.each(['none', 'session', 'account'] as const)(
+  'keeps all unset Local Mode workflows on this phone with %s access',
+  (cloudAccess) => {
+    for (const scope of ['dictation', 'upload', 'cleanup', 'notes', 'agent'] as const) {
+      expect(unsetSelection(scope, 'private', cloudAccess)).toEqual({ mode: 'local' });
+      expect(workflowSummary(config({}), scope, 'private', { cloudAccess })).toBe('On-Device');
+    }
+  },
+);

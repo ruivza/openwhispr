@@ -30,7 +30,7 @@ export function SlowDownloadSheet({
     try {
       await onContinueCloud();
     } catch (cause) {
-      setError(describeOnboardingError(cause, 'Cloud is unavailable. Try again.'));
+      setError(describeOnboardingError(cause, 'Could not continue setup. Try again.'));
     } finally {
       inFlight.current = false;
       setBusy(false);
@@ -70,8 +70,7 @@ export function SlowDownloadSheet({
               <View className="flex-row items-center gap-2">
                 <SystemIcon name="lock.fill" mdName="Lock" size={16} color="brand" />
                 <Text className="flex-1 text-[13px] leading-[18px] text-secondaryLabel">
-                  Turn on <Text className="font-semibold text-label">Private Mode</Text> in Account
-                  → AI Models to switch once it&apos;s ready.
+                  Dictation stays on-device. Manage your models in AI Models after setup.
                 </Text>
               </View>
             </View>

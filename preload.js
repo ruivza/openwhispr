@@ -63,12 +63,6 @@ const registerListener = (channel, handlerFactory) => {
 };
 
 contextBridge.exposeInMainWorld("electronAPI", {
-  initialModelRegistrySnapshot: ipcRenderer.sendSync?.("model-registry-initial"),
-  getModelRegistry: () => ipcRenderer.invoke("get-model-registry"),
-  onModelRegistryUpdated: registerListener(
-    "model-registry-updated",
-    (callback) => (_event, snapshot) => callback(snapshot)
-  ),
   setOnboardingWindowMode: (mode) => ipcRenderer.invoke("onboarding-set-window-mode", mode),
   setOnboardingActive: (active) => ipcRenderer.invoke("onboarding-set-active", active),
   openPermissionGuide: (state) => ipcRenderer.invoke("permission-guide-open", state),
@@ -158,6 +152,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getTranscriptions: (limit, options) =>
     ipcRenderer.invoke("db-get-transcriptions", limit, options),
   recordAnalyticsEvent: (input) => ipcRenderer.invoke("analytics-record-event", input),
+  closeActivationStream: () => ipcRenderer.invoke("activation-close"),
+  beginActivationCapture: () => ipcRenderer.invoke("activation-begin"),
+  stopActivationCapture: (id) => ipcRenderer.invoke("activation-stop", id),
+  finishActivationCapture: (id, words) => ipcRenderer.invoke("activation-finish", id, words),
+  cancelActivationCapture: (id) => ipcRenderer.invoke("activation-cancel", id),
   getAnalyticsSummary: () => ipcRenderer.invoke("analytics-get-summary"),
   getPendingAnalyticsEvents: (limit, context) =>
     ipcRenderer.invoke("analytics-get-pending", limit, context),
@@ -1139,6 +1138,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
   ),
 
   // Agent cloud tools
+  productHelp: (id, input) => ipcRenderer.invoke("product-help", id, input),
+  cancelProductHelp: (id) => ipcRenderer.send("product-help-cancel", id),
+  productHelpBasics: () => ipcRenderer.invoke("product-help-basics"),
   agentWebSearch: (query, numResults) => ipcRenderer.invoke("agent-web-search", query, numResults),
   agentOpenNote: (noteId) => ipcRenderer.invoke("agent-open-note", noteId),
 

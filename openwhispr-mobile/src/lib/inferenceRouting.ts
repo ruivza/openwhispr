@@ -16,8 +16,12 @@ export type ProviderRoute = Extract<InferenceRoute, { mode: 'providers' }>;
 export function getInferenceSelection(scope: InferenceScope): InferenceSelection | undefined {
   // return useConfigStore.getState().config?.inference?.[scope];
   const selection = useConfigStore.getState().config?.inference?.[scope];
-  if (!selection && useProcessingModeStore.getState().activeMode === 'providers' &&
-      (scope === 'dictation' || scope === 'cleanup' || scope === 'agent')) return undefined;
+  if (
+    !selection &&
+    useProcessingModeStore.getState().activeMode === 'providers' &&
+    (scope === 'dictation' || scope === 'cleanup' || scope === 'agent')
+  )
+    return undefined;
   return localSelection(selection);
 }
 
@@ -30,19 +34,17 @@ export function getPickedLocalModel(scope: 'dictation' | 'upload'): LocalModelKe
 }
 
 export function getTranscriptionProvider(scope: InferenceScope): TranscriptionProvider {
-  if (useProcessingModeStore.getState().activeMode === 'private') return 'local';
+  const { activeMode } = useProcessingModeStore.getState();
+  // Local Mode keeps dictation on this iPhone. Uploads run what is saved for them, or with nothing
+  // saved, on this iPhone. Hosted sessions do not change these defaults.
+  if (activeMode === 'private' && scope !== 'upload') return 'local';
   const selection = getInferenceSelection(scope);
   if (selection?.mode === 'providers') return 'byok';
   if (selection?.mode === 'local') return 'local';
   // Bring Your Own Key mode without a dictation choice must refuse (see
   // snapshotTranscriptionJob), never quietly send the audio to Cloud. Uploads
-  // without their own choice still follow Cloud.
-  if (
-    !selection &&
-    scope === 'dictation' &&
-    useProcessingModeStore.getState().activeMode === 'providers'
-  )
-    return 'byok';
+  // without their own choice stay on this iPhone.
+  if (!selection && scope === 'dictation' && activeMode === 'providers') return 'byok';
   // return 'cloud';
   return 'local';
 }
@@ -105,6 +107,7 @@ export function snapshotTextInference(provider: TranscriptionProvider): TextInfe
     const errorKey = scope === 'cleanup' ? 'cleanupUnavailable' : 'agentUnavailable';
     const selection = getInferenceSelection(scope);
     // A local transcript leaves the phone only for a cleanup provider the user saved.
+    // Unset and legacy hosted choices stay on this phone, including when an old session exists.
     if (provider === 'local' && !(scope === 'cleanup' && selection?.mode === 'providers')) {
       result[routeKey] = { mode: 'local', scope };
     } else if (!selection && provider === 'byok') {
@@ -121,7 +124,8 @@ export function snapshotTextInference(provider: TranscriptionProvider): TextInfe
         result[errorKey] =
           `Complete ${scope} provider setup in AI Models. Your raw transcript is saved.`;
     } else {
-      result[routeKey] = { mode: selection?.mode ?? 'openwhispr', scope };
+      // result[routeKey] = { mode: selection?.mode ?? 'openwhispr', scope };
+      result[routeKey] = { mode: 'local', scope };
     }
   }
   return result;

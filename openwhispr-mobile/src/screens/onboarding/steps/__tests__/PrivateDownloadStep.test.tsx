@@ -16,7 +16,7 @@ jest.mock('../SlowDownloadSheet', () => {
     }) =>
       visible ? (
         <Pressable onPress={onContinueCloud}>
-          <Text>Keep downloading with Cloud</Text>
+          <Text>Continue setup while downloading</Text>
         </Pressable>
       ) : null,
   };
@@ -143,7 +143,7 @@ beforeEach(() => {
 });
 afterEach(() => jest.useRealTimers());
 
-it('uses the same Cloud choice from the slow-download sheet and keeps the download', async () => {
+it('continues local setup from the slow-download sheet and keeps the download', async () => {
   jest.useFakeTimers();
   setDownload('parakeet-v2', { status: 'downloading', progress: 0.2 });
   render(<PrivateDownloadStep />);
@@ -152,57 +152,57 @@ it('uses the same Cloud choice from the slow-download sheet and keeps the downlo
     jest.advanceTimersByTime(8000);
   });
   await act(async () => {
-    fireEvent.press(screen.getByText('Keep downloading with Cloud'));
+    fireEvent.press(screen.getByText('Continue setup while downloading'));
   });
-  expect(mockChooseMode).toHaveBeenCalledWith('cloud', 'private-download');
+  expect(mockChooseMode).toHaveBeenCalledWith('private', 'private-download');
   expect(mockCancelDownload).not.toHaveBeenCalled();
 });
 
-it('uses the same Cloud choice when local recording is unavailable', async () => {
+it('defers model setup without enabling Cloud when local recording is unavailable', async () => {
   jest.mocked(LocalTranscriptionService.isAvailable).mockReturnValue(false);
   render(<PrivateDownloadStep />);
-  fireEvent.press(screen.getByText('Use Cloud instead'));
-  await waitFor(() => expect(mockChooseMode).toHaveBeenCalledWith('cloud', 'private-download'));
+  fireEvent.press(screen.getByText('Set up models later'));
+  await waitFor(() => expect(mockChooseMode).toHaveBeenCalledWith('private', 'private-download'));
 });
 
-it('uses the same Cloud choice when model discovery fails', async () => {
+it('defers model setup without enabling Cloud when model discovery fails', async () => {
   jest
     .mocked(LocalTranscriptionService.getAvailability)
     .mockRejectedValueOnce(new Error('Unavailable'));
   render(<PrivateDownloadStep />);
-  fireEvent.press(await screen.findByText('Use Cloud instead'));
-  await waitFor(() => expect(mockChooseMode).toHaveBeenCalledWith('cloud', 'private-download'));
+  fireEvent.press(await screen.findByText('Set up models later'));
+  await waitFor(() => expect(mockChooseMode).toHaveBeenCalledWith('private', 'private-download'));
 });
 
 it('reasserts Local before continuing with a completed model', async () => {
   setDownload('parakeet-v2', { status: 'completed', progress: 1 });
   render(<PrivateDownloadStep />);
-  fireEvent.press(await screen.findByText('Continue with Private'));
+  fireEvent.press(await screen.findByText('Continue with Local Mode'));
   await waitFor(() => expect(mockChooseMode).toHaveBeenCalledWith('private', 'private-download'));
 });
 
-describe('PrivateDownloadStep — switching to Cloud', () => {
+describe('PrivateDownloadStep — deferring model setup', () => {
   // A failed attempt leaves its partial download staged. Leaving Private behind is the last
   // chance to reclaim that storage, since only installed models get a delete button.
-  it('reclaims the staged partial download when switching to Cloud after an error', async () => {
+  it('reclaims a staged partial download when deferring model setup after an error', async () => {
     setDownload('parakeet-v2', { status: 'error', progress: 0.4, error: 'Network lost' });
     render(<PrivateDownloadStep />);
     await screen.findByText('Parakeet v2');
 
-    fireEvent.press(screen.getByText("Don't use Private — switch to Cloud"));
+    fireEvent.press(screen.getByText('Set up models later'));
 
     await waitFor(() => expect(mockCancelDownload).toHaveBeenCalledWith('parakeet-v2'));
-    expect(mockChooseMode).toHaveBeenCalledWith('cloud', 'private-download');
+    expect(mockChooseMode).toHaveBeenCalledWith('private', 'private-download');
   });
 
-  it('keeps a completed model when switching to Cloud', async () => {
+  it('keeps a completed model when deferring model setup', async () => {
     setDownload('parakeet-v2', { status: 'completed', progress: 1 });
     render(<PrivateDownloadStep />);
     await screen.findByText('Parakeet v2');
 
-    fireEvent.press(screen.getByText('Use Cloud instead'));
+    fireEvent.press(screen.getByText('Set up models later'));
 
-    await waitFor(() => expect(mockChooseMode).toHaveBeenCalledWith('cloud', 'private-download'));
+    await waitFor(() => expect(mockChooseMode).toHaveBeenCalledWith('private', 'private-download'));
     expect(mockCancelDownload).not.toHaveBeenCalled();
   });
 });
@@ -268,7 +268,7 @@ it('stops a stale download even when the new recommendation is already installed
 
   render(<PrivateDownloadStep />);
 
-  await screen.findByText('Continue with Private');
+  await screen.findByText('Continue with Local Mode');
   await waitFor(() =>
     expect(useModelDownloadStore.getState().downloads['parakeet-v2'].status).toBe('idle'),
   );

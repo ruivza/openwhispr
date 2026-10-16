@@ -1,3 +1,5 @@
+import { DOCS_ORIGIN } from "../helpers/productHelpFallback";
+
 /**
  * What the assistant can't do in this conversation, and why. Named in the
  * system prompt so the model tells the user how to turn a capability on
@@ -164,7 +166,7 @@ function describeOne({ name, reason, where }: UnavailableCapability): string {
     case "notConfigured":
       return `${name}: not configured; this build needs the user's own service configuration${at}.`;
     case "modelTooSmall":
-      return `${name}: the selected model runs without tools (small or unrecognized local models do); the user can choose a larger model or a cloud provider${at}. You can still use anything already in this prompt, such as note text, and write any text the user asks for.`;
+      return `${name}: the selected model runs without tools (small or unrecognized local models do); the user can choose a larger model or a cloud provider${at}. For OpenWhispr product questions, the user can open ${DOCS_ORIGIN} or inspect their current settings in Settings. You can still use anything already in this prompt, such as note text, and write any text the user asks for.`;
   }
 }
 

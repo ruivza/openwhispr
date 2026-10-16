@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { execFileSync } = require("node:child_process");
+const { execFileSync, spawnSync } = require("node:child_process");
 const { syncUpstream } = require("./sync-upstream.cjs");
 const { setVersionMetadata } = require("./upstream-version.cjs");
 
@@ -121,6 +121,16 @@ test("clean merge retains fork commits and updates only fork version metadata", 
   const result = await syncUpstream({
     ...f,
     validate: async (root) => {
+      const partialClone = spawnSync(
+        "git",
+        ["config", "--get-regexp", "^remote\\.origin\\.(promisor|partialclonefilter)$"],
+        { cwd: root, encoding: "utf8", windowsHide: true }
+      );
+      assert.equal(
+        partialClone.status,
+        1,
+        "Sync must have complete objects instead of relying on the fork to supply upstream blobs"
+      );
       const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json")));
       assert.equal(pkg.scripts.fork, "retain my custom command");
       assert.equal(pkg.version, "1.10.4-ruivza.1");

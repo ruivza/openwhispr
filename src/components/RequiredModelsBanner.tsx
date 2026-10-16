@@ -1,5 +1,4 @@
-import { useRegistryVersion } from "../hooks/useRegistryVersion";
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { AlertTriangle } from "./icons";
 import { useTranslation } from "react-i18next";
 import { Button } from "./ui/button";
@@ -18,7 +17,6 @@ import { getParakeetModels, getWhisperModels } from "../models/ModelRegistry";
  * if one goes missing again. Deliberately a nag surface, not a hard block.
  */
 export function RequiredModelsBanner() {
-  useRegistryVersion();
   const { t } = useTranslation();
   const { missing, loading, refresh } = useRequiredLocalModels();
   const whisperDownload = useModelDownload({ modelType: "whisper", onDownloadComplete: refresh });
@@ -27,10 +25,13 @@ export function RequiredModelsBanner() {
 
   const parakeetCatalog = getParakeetModels();
   const whisperCatalog = getWhisperModels();
-  const missingNames = (() =>
-    missing
-      .map((modelId) => (parakeetCatalog[modelId] ?? whisperCatalog[modelId])?.name ?? modelId)
-      .join(", "))();
+  const missingNames = useMemo(
+    () =>
+      missing
+        .map((modelId) => (parakeetCatalog[modelId] ?? whisperCatalog[modelId])?.name ?? modelId)
+        .join(", "),
+    [missing, parakeetCatalog, whisperCatalog]
+  );
 
   const downloadMissing = useCallback(async () => {
     setDownloadingAll(true);

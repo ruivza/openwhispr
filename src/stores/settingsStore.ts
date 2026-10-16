@@ -1,4 +1,3 @@
-import "../models/registryBootstrap.js";
 import { create } from "zustand";
 import { API_ENDPOINTS } from "../config/constants";
 import i18n, { normalizeUiLanguage } from "../i18n";
@@ -32,8 +31,7 @@ import {
 } from "../config/inferenceScopes";
 import { normalizeChineseScriptPreference } from "../utils/chineseScript";
 import { adjustBedrockModelForRegion } from "../utils/bedrockRegions";
-import { registryData as modelRegistryData } from "../models/registryData.js";
-import { getCloudModelProviders } from "../models/cloudModelCatalog";
+import modelRegistryData from "../models/modelRegistryData.json";
 import { pickDefaultModelId } from "../models/providerDefaultModel";
 // Both are leaves: tinfoilModelCache imports only a type from ModelRegistry and
 // the switch store only zustand, so neither reopens the ModelRegistry cycle.
@@ -156,10 +154,10 @@ function canonicalTranscriptionBaseUrl(providerId: string): string | null {
 function reasoningModelBelongsToProvider(providerId: string, modelId: string): boolean {
   if (!modelId) return false;
   // Custom and OpenRouter ids are free-form; any remembered id is valid.
-  // Tinfoil's separate live overlay is shared with the picker and policy defaults.
+  // Tinfoil's registry entry is refreshed in place from its live catalog.
   if (providerId === "custom" || providerId === "openrouter") return true;
   return (
-    getCloudModelProviders()
+    modelRegistryData.cloudProviders
       .find((provider) => provider.id === providerId)
       ?.models.some((model) => model.id === modelId) ?? false
   );
@@ -171,7 +169,7 @@ function defaultLlmModel(mode: InferenceMode, providerId: string, bedrockRegion:
       ? modelRegistryData.localProviders
       : mode === "enterprise"
         ? modelRegistryData.enterpriseProviders
-        : getCloudModelProviders();
+        : modelRegistryData.cloudProviders;
   const defaultModel = pickDefaultModelId(providers.find(({ id }) => id === providerId));
   return mode === "enterprise" && providerId === "bedrock"
     ? adjustBedrockModelForRegion(defaultModel, bedrockRegion)
@@ -2756,6 +2754,8 @@ useSettingsStore.setState(getForkSettingsPatch(useSettingsStore.getState()));
 
 // --- Selectors (derived state, not stored) ---
 
+// Route cleanup to Cloud on this, never on cleanupCloudMode alone: picking a local
+// model or the notes onboarding mode toggle sets cleanupMode and leaves that field stale.
 export const selectIsCloudCleanupMode = (state: SettingsState) =>
   state.isSignedIn && state.cleanupMode === "openwhispr" && state.cleanupCloudMode === "openwhispr";
 

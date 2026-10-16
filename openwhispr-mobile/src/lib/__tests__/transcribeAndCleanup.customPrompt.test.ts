@@ -77,6 +77,8 @@ describe('transcribeAndCleanup with a custom cleanup prompt', () => {
       const result = await transcribeAndCleanup({
         audioUri: 'file://a.wav',
         provider: 'cloud',
+        cleanupRoute: { mode: 'openwhispr', scope: 'cleanup' },
+        agentRoute: { mode: 'openwhispr', scope: 'agent' },
         requestContext,
         keyboardTone: 'default',
       });
@@ -93,6 +95,8 @@ describe('transcribeAndCleanup with a custom cleanup prompt', () => {
     await transcribeAndCleanup({
       audioUri: 'file://a.wav',
       provider: 'cloud',
+      cleanupRoute: { mode: 'openwhispr', scope: 'cleanup' },
+      agentRoute: { mode: 'openwhispr', scope: 'agent' },
       requestContext: 'recording',
     });
     expect(mockFused).toHaveBeenCalled();

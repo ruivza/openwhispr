@@ -1,7 +1,6 @@
 const WebSocket = require("ws");
 const debugLogger = require("./debugLogger");
 const { computePcm16Rms } = require("../utils/audioUtils");
-const { getRegistryData } = require("../models/registryData.js");
 
 const SAMPLE_RATE = 16000;
 const WEBSOCKET_TIMEOUT_MS = 15000;
@@ -20,15 +19,10 @@ const MAX_CUSTOM_VOCABULARY = 100;
 const TURN_REOPEN_RMS = 0.012;
 const GEMINI_LIVE_MODEL = "gemini-3.5-transcribe-live";
 
-function resolveGeminiLiveModel({ model, mode } = {}) {
-  if (mode !== "byok" || typeof model !== "string") return GEMINI_LIVE_MODEL;
-  const selected = model.trim();
-  const registered = getRegistryData()
-    .transcriptionProviders.find((provider) => provider.id === "gemini")
-    ?.models.some((entry) => entry.id === selected && entry.streaming);
-  // Keep legacy Gemini IDs usable; new IDs are scoped to the verified catalog.
-  return registered || selected.startsWith("gemini-") ? selected : GEMINI_LIVE_MODEL;
-}
+// In managed mode the model comes from the BYOK-shaped settings, which still
+// hold another provider's id, so anything but a Gemini id is ignored.
+const resolveLiveModel = (model) =>
+  model && model.startsWith("gemini-") ? model : GEMINI_LIVE_MODEL;
 
 const WS_BASE = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage";
 
@@ -92,6 +86,7 @@ class GeminiLiveStreaming {
     this._audioStreamEndSentAt = null;
     this._turnEnded = false;
     this._turnEndResolve = null;
+    this._socketGeneration = 0;
   }
 
   // Starts buffering audio before the socket exists, covering the token fetch
@@ -126,7 +121,7 @@ class GeminiLiveStreaming {
     return buildGeminiLiveUrl(options);
   }
 
-  buildSetupMessage({ model, mode, language, keyterms } = {}) {
+  buildSetupMessage({ model, language, keyterms } = {}) {
     const customVocabulary = (keyterms || [])
       .map((term) => String(term).trim())
       .filter(Boolean)
@@ -140,7 +135,7 @@ class GeminiLiveStreaming {
 
     return {
       setup: {
-        model: `models/${resolveGeminiLiveModel({ model, mode })}`,
+        model: `models/${resolveLiveModel(model)}`,
         generationConfig: { responseModalities: ["TEXT"] },
         inputAudioTranscription,
       },
@@ -164,7 +159,7 @@ class GeminiLiveStreaming {
     this.completedSegments = [];
     this.openTurnPartial = "";
     this.audioBytesSent = 0;
-    this.currentModel = resolveGeminiLiveModel(options);
+    this.currentModel = resolveLiveModel(options.model);
     this._connectionLossNotified = false;
     this._audioStreamEndSentAt = null;
     this._turnEnded = false;
@@ -196,19 +191,24 @@ class GeminiLiveStreaming {
         reject(new Error("Gemini Live connection timeout"));
       }, WEBSOCKET_TIMEOUT_MS);
 
-      this.ws = new WebSocket(url);
+      const ws = new WebSocket(url);
+      const socketGeneration = ++this._socketGeneration;
+      this.ws = ws;
 
-      this.ws.on("open", () => {
+      ws.on("open", () => {
+        if (this.ws !== ws) return;
         // Audio sent before setupComplete is discarded by the server, so the
         // setup message is the only thing that goes out on open.
-        this.ws.send(JSON.stringify(this.buildSetupMessage(options)));
+        ws.send(JSON.stringify(this.buildSetupMessage(options)));
       });
 
-      this.ws.on("message", (data) => {
+      ws.on("message", (data) => {
+        if (this.ws !== ws) return;
         this.handleMessage(data);
       });
 
-      this.ws.on("error", (error) => {
+      ws.on("error", (error) => {
+        if (this._socketGeneration !== socketGeneration) return;
         const wasActive = this.isConnected;
         debugLogger.error("Gemini Live WebSocket error", { error: error.message });
         this.cleanup();
@@ -220,7 +220,10 @@ class GeminiLiveStreaming {
         }
       });
 
-      this.ws.on("close", (code, reason) => {
+      ws.on("close", (code, reason) => {
+        // A replaced socket can close after the next handshake has started.
+        // Its late events must not clean up or reject the new connection.
+        if (this._socketGeneration !== socketGeneration) return;
         const wasActive = this.isConnected;
         debugLogger.debug("Gemini Live WebSocket closed", {
           code,
@@ -505,9 +508,4 @@ class GeminiLiveStreaming {
   }
 }
 
-module.exports = {
-  GeminiLiveStreaming,
-  buildGeminiLiveUrl,
-  GEMINI_LIVE_MODEL,
-  resolveGeminiLiveModel,
-};
+module.exports = { GeminiLiveStreaming, buildGeminiLiveUrl, GEMINI_LIVE_MODEL };

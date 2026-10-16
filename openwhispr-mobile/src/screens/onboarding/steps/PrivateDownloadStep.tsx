@@ -123,7 +123,7 @@ export function PrivateDownloadStep() {
       <OnboardingShell
         progress={stepProgress}
         onBack={goBack}
-        title="Private mode needs the full app"
+        title="Local Mode needs the full app"
         subtitle={getPrivateModeUnavailableMessage()}
         // ctaLabel="Use Cloud instead"
         ctaLabel="Set up models later"
@@ -143,7 +143,7 @@ export function PrivateDownloadStep() {
       <OnboardingShell
         progress={stepProgress}
         onBack={goBack}
-        title="Local setup needs another try"
+        title="Local Mode setup needs another try"
         subtitle={discoveryError}
         ctaLabel="Retry model selection"
         onCta={() => setDiscoveryAttempt((attempt) => attempt + 1)}
@@ -165,12 +165,12 @@ export function PrivateDownloadStep() {
       <OnboardingShell
         progress={stepProgress}
         onBack={goBack}
-        title="Set up Private mode"
-        titleAccent="Private"
-        subtitle={`Private runs entirely on your device. It needs a one-time ${
+        title="Set up Local Mode"
+        titleAccent="Local"
+        subtitle={`Local Mode transcribes on your device. It needs a one-time ${
           modelSize || 'model'
         } download, matched to your languages.`}
-        ctaLabel={done ? 'Continue with Private' : 'Continue · available when ready'}
+        ctaLabel={done ? 'Continue with Local Mode' : 'Continue · available when ready'}
         ctaDisabled={!done}
         onCta={() => chooseOnboardingMode('private', 'private-download')}
         // secondaryCtaLabel={done ? 'Use Cloud instead' : "Don't use Private — switch to Cloud"}

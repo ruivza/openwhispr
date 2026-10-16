@@ -141,6 +141,10 @@ test("managed feature and minimum-version denials are enforced in the main-proce
   assert.equal(await context.resolve(), "unavailable");
   context.setVersion("1.9.0");
   assert.equal(await context.resolve(), "allowed");
+  context.setVersion("1.8.1-ruivza.4");
+  assert.equal(await context.resolve(), "allowed");
+  context.setVersion("1.8.0-ruivza.4");
+  assert.equal(await context.resolve(), "unavailable");
 });
 
 test("malformed retained managed policy and damaged cache fail closed without erasing them", async (t) => {

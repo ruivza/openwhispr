@@ -6,17 +6,16 @@
 // allowlist rejected undefined). Pure module, mirrors meetingTranscriptionRouting.
 import { isOrukeetStreaming } from "./selfHostedTranscription.js";
 import { STREAMING_ONLY_PROVIDERS } from "./transcriptionRoute.ts";
-import { registryData as modelRegistryData, subscribeRegistry } from "../models/registryData.js";
+import modelRegistryData from "../models/modelRegistryData.json" with { type: "json" };
 
 export const ORUKEET_MODEL = "orukeet-v0.1.0";
 const ORUKEET_LANGUAGES = new Set(
   modelRegistryData.parakeetModels[ORUKEET_MODEL].supportedLanguages
 );
 
-// Oruk's audio classifier score (not a calibrated probability): 0.90 caught
-// 92% of unsupported FLEURS clips at 6 s and 62.5% at 3 s while flagging 0.4%
-// / 1.2% of supported ones. A false flag costs one batch round trip; a miss
-// pastes nonsense. See docs/orukeet-streaming-language.md.
+// Existing default retained during the opt-in group-score rollout. Scores are
+// not calibrated probabilities; see docs/orukeet-streaming-language.md for
+// the expanded evaluation and the separate three/six-second behavior.
 const ORUKEET_LANGUAGE_FALLBACK_MIN_CONFIDENCE = 0.9;
 const ORUKEET_LANGUAGE_FALLBACK_MIN_AUDIO_SECONDS = 3;
 
@@ -42,6 +41,70 @@ export function shouldRetranscribeOrukeetLanguage({ language, final }) {
   );
 }
 
+// Opt-in, server-controlled rollout. Missing/unknown modes retain the existing
+// rule; shadow records the comparison without changing the user's result.
+const ORUKEET_LANGUAGE_ROUTING_MODES = new Set(["shadow", "supported-0.30", "supported-0.10"]);
+export const ORUKEET_EXPERIMENT_CONFIG_TTL_MS = 30000;
+export function hasOrukeetExperiment(config) {
+  return (
+    ORUKEET_LANGUAGE_ROUTING_MODES.has(config?.orukeetLanguageRouting) ||
+    config?.orukeetPipeline === "gemma12"
+  );
+}
+const validScore = (value) => Number.isFinite(value) && value >= 0 && value <= 1;
+
+export function evaluateOrukeetLanguageRouting({ language, final, mode }) {
+  const legacyFallback = shouldRetranscribeOrukeetLanguage({ language, final });
+  if (!ORUKEET_LANGUAGE_ROUTING_MODES.has(mode)) {
+    return { fallback: legacyFallback, comparison: null };
+  }
+  const auto = !language || language === "auto";
+  const seconds =
+    Number.isFinite(final?.languageAudioSeconds) && final.languageAudioSeconds > 0
+      ? final.languageAudioSeconds
+      : null;
+  const score = validScore(final?.languageSupportedScore) ? final.languageSupportedScore : null;
+  const topLanguage =
+    typeof final?.language === "string" && /^[a-z]{2}$/.test(final.language)
+      ? final.language
+      : null;
+  const topScore = validScore(final?.languageConfidence) ? final.languageConfidence : null;
+  const eligible = auto && final?.success !== false && seconds >= 6 && score !== null;
+  const candidate030 = eligible ? score <= 0.3 : null;
+  const candidate010 = eligible ? score <= 0.1 : null;
+  const candidate = mode === "supported-0.30" ? candidate030 : candidate010;
+  const fallback =
+    mode === "shadow" || candidate === null ? legacyFallback : legacyFallback || candidate;
+
+  // Explicit allowlist: never spread a final result, settings, transcript,
+  // recording, token, account identifier or arbitrary server fields into logs.
+  return {
+    fallback,
+    comparison: {
+      version: 1,
+      mode,
+      auto,
+      eligible,
+      analyzedSeconds: seconds,
+      topLanguage,
+      topScore,
+      supportedScore: score,
+      legacyFallback,
+      top05Fallback:
+        auto &&
+        final?.success !== false &&
+        seconds >= 6 &&
+        topLanguage !== null &&
+        !isOrukeetLanguage(topLanguage) &&
+        topScore !== null &&
+        topScore >= 0.5,
+      candidate030,
+      candidate010,
+      selectedFallback: fallback,
+    },
+  };
+}
+
 // Reported for every Orukeet dictation so the backend's per-user gate sees
 // what was spoken. No `language` key means an older gateway or no final:
 // nothing is reported, since "unknown" would misstate the detector.
@@ -58,45 +121,12 @@ export function orukeetDetectedLanguageFields(final) {
   };
 }
 
-export function isRegistryStreamingModel(providerId, modelId) {
-  return (
-    modelRegistryData.transcriptionProviders
-      .find((provider) => provider.id === providerId)
-      ?.models.some((model) => model.id === modelId && model.streaming) ?? false
-  );
-}
-const MANAGED_REALTIME_MODELS = new Set(["gpt-4o-mini-transcribe", "gpt-4o-transcribe"]);
-export const REALTIME_MODELS = new Set();
-export function isOpenAiRealtimeSelection(settings) {
-  return settings.cloudTranscriptionMode === "byok"
-    ? (settings.cloudTranscriptionProvider || "openai") === "openai" &&
-        REALTIME_MODELS.has(settings.cloudTranscriptionModel)
-    : MANAGED_REALTIME_MODELS.has(settings.cloudTranscriptionModel);
-}
-function refreshRealtimeModels() {
-  REALTIME_MODELS.clear();
-  for (const model of modelRegistryData.transcriptionProviders.find(
-    (provider) => provider.id === "openai"
-  )?.models || []) {
-    if (model.streaming) REALTIME_MODELS.add(model.id);
-  }
-}
-refreshRealtimeModels();
-subscribeRegistry(refreshRealtimeModels);
+export const REALTIME_MODELS = new Set(["gpt-4o-mini-transcribe", "gpt-4o-transcribe"]);
 
 // REALTIME_MODELS is the OpenAI-only shortcut (it forces "openai-realtime"), so
 // Gemini's live model routes on its own. Keying on the model id and not the
 // provider is required: the batch model on the same provider is HTTP-only.
 export const GEMINI_LIVE_MODEL = "gemini-3.5-transcribe-live";
-
-export function isGeminiLiveSelection(settings) {
-  return (
-    settings.cloudTranscriptionProvider === "gemini" &&
-    (settings.cloudTranscriptionMode === "byok"
-      ? isRegistryStreamingModel("gemini", settings.cloudTranscriptionModel)
-      : settings.cloudTranscriptionModel === GEMINI_LIVE_MODEL)
-  );
-}
 
 export function defaultStreamingProviderName(context) {
   return context === "notes" ? "deepgram" : "openai-realtime";
@@ -137,7 +167,10 @@ export function resolveStreamingProviderName({ settings, context, sttConfig, lan
   ) {
     return "corti";
   }
-  if (isGeminiLiveSelection(settings)) {
+  if (
+    settings.cloudTranscriptionProvider === "gemini" &&
+    settings.cloudTranscriptionModel === GEMINI_LIVE_MODEL
+  ) {
     return "gemini";
   }
   // Realtime-only providers have no batch endpoint, so BYOK selection alone
@@ -150,7 +183,7 @@ export function resolveStreamingProviderName({ settings, context, sttConfig, lan
   ) {
     return settings.cloudTranscriptionProvider;
   }
-  if (isOpenAiRealtimeSelection(settings)) {
+  if (REALTIME_MODELS.has(settings.cloudTranscriptionModel)) {
     return "openai-realtime";
   }
   return sttConfig?.streamingProvider || defaultStreamingProviderName(context);
@@ -162,6 +195,7 @@ export function buildStreamingSessionOptions({
   language,
   keyterms,
   voiceAgentRequested = false,
+  pipelineOptions,
 }) {
   const options = {
     provider: providerName,
@@ -180,6 +214,7 @@ export function buildStreamingSessionOptions({
   }
   if (providerName === "orukeet") {
     options.model = ORUKEET_MODEL;
+    if (options.mode !== "byok" && pipelineOptions) options.pipelineOptions = pipelineOptions;
     if (options.mode === "byok") {
       options.baseUrl = settings.remoteTranscriptionUrl || settings.cloudTranscriptionBaseUrl;
     }

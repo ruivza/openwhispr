@@ -1,4 +1,3 @@
-import { useRegistryVersion } from "../../hooks/useRegistryVersion";
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import forkConfig from "../../config/fork.json";
@@ -52,7 +51,6 @@ function MeetingEchoCancellationRow() {
 const noop = () => {};
 
 export function MeetingTranscriptionPanel() {
-  useRegistryVersion();
   const { t } = useTranslation();
   const policySnapshot = usePolicySnapshot();
 
