@@ -839,6 +839,10 @@ export default function ControlPanel({ initialSettingsSection }: ControlPanelPro
                 ? "controlPanel.history.discarded.recovered"
                 : "controlPanel.history.retrySuccess"
             ),
+            // A partial result still replaced the row; say so, as dictation does.
+            ...(result.warning
+              ? { description: t("hooks.audioRecording.partialTranscription.description") }
+              : {}),
           });
         } else {
           toast({
