@@ -5,12 +5,15 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const handlersModulePath = require.resolve("../../src/helpers/ipcHandlers");
+const chunkedTranscriptionModulePath = require.resolve("../../src/helpers/chunkedTranscription");
 const originalLoad = Module._load;
 
 // Captures every ipcMain.handle registration and every net.fetch request so the
 // registered handler closures can be invoked directly against a fake `this`.
 const handlers = new Map();
 const fetches = [];
+let legacyCloudApiUrl = null;
+let cloudSplits = 0;
 let fetchResponse = () => ({
   ok: true,
   status: 200,
@@ -76,6 +79,12 @@ const CONVERTED_WAV = Buffer.concat([WAV_BUFFER, Buffer.from("converted")]);
 // Just over the inline upload limit, so an OpenWhispr Cloud retry is chunked.
 const CHUNKED_BUFFER = Buffer.alloc(4 * 1024 * 1024 + 1);
 const CLOUD_CHUNKS = ["chunk-000.mp3", "chunk-001.mp3", "chunk-002.mp3", "chunk-003.mp3"];
+async function splitCloudAudio(inputPath, chunkDir) {
+  cloudSplits++;
+  const chunkPaths = CLOUD_CHUNKS.map((name) => path.join(chunkDir, name));
+  for (const chunkPath of chunkPaths) fs.writeFileSync(chunkPath, "audio");
+  return { chunkPaths, durationSeconds: 120 };
+}
 
 // Conversion is mocked rather than run: spawning ffmpeg from a unit test would
 // make it slow and dependent on the runner having a usable binary.
@@ -86,6 +95,7 @@ const cortiCalls = [];
 const tinfoilCalls = [];
 const textUpdates = [];
 const statusUpdates = [];
+const audioUpdates = [];
 let parakeetBehavior = async () => ({ success: true, text: "local text" });
 let whisperBehavior = async () => ({ success: true, text: "whisper text" });
 let cortiBehavior = async () => ({ text: "corti text" });
@@ -94,7 +104,26 @@ let cortiBehavior = async () => ({ text: "corti text" });
 // handler invocation time, not at module load.
 Module._load = function loadWithMocks(request, parent, isMain) {
   if (request === "electron") return electronStub;
+  if (
+    parent?.filename === chunkedTranscriptionModulePath &&
+    request === "./ffmpegUtils" &&
+    legacyCloudApiUrl !== null
+  ) {
+    // The shared chunk pipeline resolves ffmpeg itself, outside ipcHandlers.
+    // Keep this mock within the same legacy fixture as the fake transport.
+    return { ...originalLoad.call(this, request, parent, isMain), splitAudioFile: splitCloudAudio };
+  }
   if (parent?.filename === handlersModulePath) {
+    if (request === "./forkServiceConfig") {
+      const config = originalLoad.call(this, request, parent, isMain);
+      return {
+        ...config,
+        // Only the legacy cloud-response fixture supplies this test endpoint.
+        // Every other handler call keeps the shipping fork's disabled resolver.
+        resolveHostedApiUrl: (env, runtime) =>
+          legacyCloudApiUrl ?? config.resolveHostedApiUrl(env, runtime),
+      };
+    }
     if (request === "./cortiTranscription") {
       return {
         transcribeAudio: async (opts) => {
@@ -126,11 +155,7 @@ Module._load = function loadWithMocks(request, parent, isMain) {
           wavConversions.push(buffer);
           return convertBehavior(buffer, options);
         },
-        splitAudioFile: async (inputPath, chunkDir) => {
-          const chunkPaths = CLOUD_CHUNKS.map((name) => path.join(chunkDir, name));
-          for (const chunkPath of chunkPaths) fs.writeFileSync(chunkPath, "audio");
-          return { chunkPaths, durationSeconds: 120 };
-        },
+        splitAudioFile: splitCloudAudio,
       };
     }
   }
@@ -174,7 +199,7 @@ function buildFakeThis() {
     databaseManager: {
       updateTranscriptionText: (id, text) => textUpdates.push({ id, text }),
       updateTranscriptionStatus: (id, status) => statusUpdates.push({ id, status }),
-      updateTranscriptionAudio: () => {},
+      updateTranscriptionAudio: (...args) => audioUpdates.push(args),
       getTranscriptionById: (id) => dbRows.get(id),
     },
     parakeetManager: {
@@ -524,19 +549,68 @@ const CLOUD_SETTINGS = {
 async function withCloudResponse(t, respond, id) {
   const originalFetchResponse = fetchResponse;
   const originalApiUrl = process.env.OPENWHISPR_API_URL;
-  t.after(() => {
+  const originalLegacyCloudApiUrl = legacyCloudApiUrl;
+  let restored = false;
+  const restore = () => {
+    if (restored) return;
+    restored = true;
     fetchResponse = originalFetchResponse;
+    legacyCloudApiUrl = originalLegacyCloudApiUrl;
     if (originalApiUrl === undefined) delete process.env.OPENWHISPR_API_URL;
     else process.env.OPENWHISPR_API_URL = originalApiUrl;
-  });
+  };
+  t.after(restore);
   process.env.OPENWHISPR_API_URL = "https://api.openwhispr.test";
+  // Preserve the retired transport's response/partial-result contracts under a
+  // local resolver injection, without changing either shipping fork switch.
+  legacyCloudApiUrl = "https://api.openwhispr.test";
   fetchResponse = (url, init) => {
+    assert.equal(url, "https://api.openwhispr.test/api/transcribe");
     const { status, body } = respond(init);
     return { ok: status === 200, status, text: async () => JSON.stringify(body) };
   };
   textUpdates.length = 0;
-  return retryHandler({ sender: { window: {} } }, id, CLOUD_SETTINGS);
+  try {
+    return await retryHandler({ sender: { window: {} } }, id, CLOUD_SETTINGS);
+  } finally {
+    restore();
+  }
 }
+
+async function assertCloudRetryDisabled(t) {
+  const previousApiUrl = process.env.OPENWHISPR_API_URL;
+  process.env.OPENWHISPR_API_URL = "https://api.openwhispr.test";
+  t.after(() => {
+    if (previousApiUrl === undefined) delete process.env.OPENWHISPR_API_URL;
+    else process.env.OPENWHISPR_API_URL = previousApiUrl;
+  });
+  const fork = require("../../src/config/fork.json");
+  assert.equal(fork.officialAccountEnabled, false);
+  assert.equal(fork.hostedServicesEnabled, false);
+  assert.equal(legacyCloudApiUrl, null);
+  const before = {
+    fetches: fetches.length,
+    splits: cloudSplits,
+    text: textUpdates.length,
+    status: statusUpdates.length,
+    audio: audioUpdates.length,
+  };
+  for (const id of [7, 9]) {
+    const result = await retryHandler({ sender: { window: {} } }, id, CLOUD_SETTINGS);
+    assert.equal(result.success, false);
+    assert.equal(result.error, "No transcription engine available");
+  }
+  assert.equal(fetches.length, before.fetches, "disabled retries never contact the saved API");
+  assert.equal(cloudSplits, before.splits, "disabled retries never split stored recordings");
+  assert.equal(textUpdates.length, before.text);
+  assert.equal(statusUpdates.length, before.status);
+  assert.equal(audioUpdates.length, before.audio);
+}
+
+test(
+  "retry: the default fork rejects saved official routes without fetching, splitting or database updates",
+  assertCloudRetryDisabled
+);
 
 test("retry: no speech from OpenWhispr Cloud is translated like a local engine's", async (t) => {
   const result = await withCloudResponse(
@@ -601,6 +675,16 @@ test("retry: a clean chunked cloud retry reports no warning", async (t) => {
   const result = await withCloudResponse(t, () => ({ status: 200, body: { text: "part" } }), 9);
   assert.equal(result.success, true, JSON.stringify(result));
   assert.equal("warning" in result, false);
+});
+
+test("retry: the cloud-response fixture restores the disabled resolver before returning", async (t) => {
+  const originalFetchResponse = fetchResponse;
+  const originalApiUrl = process.env.OPENWHISPR_API_URL;
+  const result = await withCloudResponse(t, () => ({ status: 200, body: { text: "part" } }), 9);
+  assert.equal(result.success, true, JSON.stringify(result));
+  assert.equal(fetchResponse, originalFetchResponse);
+  assert.equal(process.env.OPENWHISPR_API_URL, originalApiUrl);
+  await assertCloudRetryDisabled(t);
 });
 
 test("retry: mistral goes to Mistral with x-api-key", async () => {

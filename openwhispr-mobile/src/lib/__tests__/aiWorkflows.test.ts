@@ -1,9 +1,29 @@
-import { unsetSelection, workflowSummary } from '@/lib/aiWorkflows';
+import {
+  cleanupRunsOnDevice,
+  cloudCleanupNeedsAccount,
+  unsetSelection,
+  workflowSelection,
+  workflowSummary,
+} from '@/lib/aiWorkflows';
 import type { UserConfig } from '@/types';
 
 function config(overrides: Partial<UserConfig> = {}): UserConfig {
   return { defaultMode: 'private', ...overrides } as UserConfig;
 }
+
+describe('Note Chat with nothing saved', () => {
+  it.each(['cloud', 'private', 'providers'] as const)('stays On-Device in %s mode', (mode) => {
+    expect(unsetSelection('noteChat', mode)).toEqual({ mode: 'local' });
+  });
+
+  it('is summarized as On-Device in Local Mode', () => {
+    expect(workflowSummary(config({}), 'noteChat', 'private')).toBe('On-Device');
+  });
+
+  it('leaves the voice assistant skipped under Bring Your Own Key', () => {
+    expect(workflowSummary(config({}), 'agent', 'providers')).toBe('Not set');
+  });
+});
 
 describe('workflowSummary for Text Cleanup', () => {
   // With nothing saved, Local Mode cleans on OpenWhispr Cloud for a signed-in account and on this
@@ -16,7 +36,7 @@ describe('workflowSummary for Text Cleanup', () => {
     expect(workflowSummary(config({}), 'cleanup', 'private', { cloudAccess })).toBe(label);
   });
 
-  it('normalizes a saved hosted cleanup to On-Device even for a legacy account', () => {
+  it('normalizes a legacy hosted cleanup even for a signed-in account', () => {
     const saved = config({ inference: { cleanup: { mode: 'openwhispr' } } });
     expect(workflowSummary(saved, 'cleanup', 'private', { cloudAccess: 'account' })).toBe(
       'On-Device',
@@ -25,13 +45,64 @@ describe('workflowSummary for Text Cleanup', () => {
 
   // Local Mode dictates on this phone, so Cloud cleanup is a separate pass that needs an account.
   it.each(['session', 'none'] as const)(
-    'keeps a saved hosted cleanup On-Device with %s access',
+    'keeps a legacy hosted cleanup local with %s access',
     (cloudAccess) => {
       const saved = config({ inference: { cleanup: { mode: 'openwhispr' } } });
       expect(workflowSummary(saved, 'cleanup', 'private', { cloudAccess })).toBe('On-Device');
       expect(
         workflowSummary({ ...saved, defaultMode: 'cloud' }, 'cleanup', 'cloud', { cloudAccess }),
       ).toBe('On-Device');
+    },
+  );
+
+  // A Cloud cleanup held automatically when dictation left Cloud isn't the user's own choice, so
+  // where Local Mode can't run it there, it cleans on this phone like an unsaved one.
+  it.each(['session', 'none'] as const)(
+    'cleans on this phone for a Cloud cleanup held automatically, with %s access',
+    (cloudAccess) => {
+      const held = config({
+        inference: { cleanup: { mode: 'openwhispr' } },
+        pinnedInference: ['cleanup'],
+      });
+      expect(workflowSummary(held, 'cleanup', 'private', { cloudAccess })).toBe('On-Device');
+      expect(cleanupRunsOnDevice(held, 'private', cloudAccess)).toBe(true);
+      expect(cloudCleanupNeedsAccount(held, 'private', cloudAccess)).toBe(false);
+      expect(workflowSelection(held, 'cleanup', 'cloud', cloudAccess)).toEqual({
+        mode: 'local',
+      });
+    },
+  );
+
+  it('keeps a legacy hosted cleanup held automatically local for a signed-in account', () => {
+    const held = config({
+      inference: { cleanup: { mode: 'openwhispr' } },
+      pinnedInference: ['cleanup'],
+    });
+    expect(workflowSummary(held, 'cleanup', 'private', { cloudAccess: 'account' })).toBe(
+      'On-Device',
+    );
+    expect(cleanupRunsOnDevice(held, 'private', 'account')).toBe(true);
+  });
+
+  // Bring Your Own Key dictation also needs the separate Cloud pass, whether the user saved Cloud
+  // or a dictation change held it there.
+  it.each([
+    ['saved', []],
+    ['held automatically', ['cleanup']],
+  ] as const)(
+    'normalizes a %s hosted cleanup under Bring Your Own Key without an account',
+    (_label, pins) => {
+      const byok = config({
+        defaultMode: 'providers',
+        inference: { cleanup: { mode: 'openwhispr' } },
+        pinnedInference: [...pins],
+      });
+      for (const cloudAccess of ['session', 'none'] as const) {
+        expect(workflowSummary(byok, 'cleanup', 'providers', { cloudAccess })).toBe('On-Device');
+      }
+      expect(workflowSummary(byok, 'cleanup', 'providers', { cloudAccess: 'account' })).toBe(
+        'On-Device',
+      );
     },
   );
 
@@ -79,7 +150,7 @@ describe('workflowSummary for Text Cleanup', () => {
     ).toBe('OpenAI');
   });
 
-  it('checks On-Device availability after normalizing a legacy hosted cleanup', () => {
+  it('checks On-Device availability for a legacy hosted cleanup', () => {
     const saved = config({ defaultMode: 'cloud', inference: { cleanup: { mode: 'openwhispr' } } });
     expect(
       workflowSummary(saved, 'cleanup', 'cloud', { onDeviceUnavailable: 'Apple Intelligence off' }),
@@ -136,13 +207,70 @@ describe('workflowSummary for Uploads', () => {
   });
 });
 
-// A stale official session never changes the destination of an unsaved workflow.
+// A Cloud selection held when dictation left another mode runs as if unsaved in Local Mode, where
+// the default already uses Cloud wherever the user's access lets it.
+describe('workflowSelection in Local Mode for a Cloud hold', () => {
+  const heldOnCloud = (scope: 'upload' | 'notes' | 'noteChat'): UserConfig =>
+    config({ inference: { [scope]: { mode: 'openwhispr' } }, pinnedInference: [scope] });
+
+  it.each([
+    ['none', 'local'],
+    ['session', 'local'],
+    ['account', 'local'],
+  ] as const)('runs an upload with %s access on %s', (cloudAccess, mode) => {
+    expect(workflowSelection(heldOnCloud('upload'), 'upload', 'private', cloudAccess)).toEqual({
+      mode,
+    });
+    expect(workflowSelection(heldOnCloud('upload'), 'upload', 'cloud', cloudAccess)).toEqual({
+      mode: 'local',
+    });
+  });
+
+  it('formats notes and chats on this phone', () => {
+    expect(workflowSelection(heldOnCloud('notes'), 'notes', 'private', 'account')).toEqual({
+      mode: 'local',
+    });
+    expect(workflowSelection(heldOnCloud('noteChat'), 'noteChat', 'private', 'none')).toEqual({
+      mode: 'local',
+    });
+  });
+
+  it('normalizes a legacy Cloud upload the user saved', () => {
+    const saved = config({ inference: { upload: { mode: 'openwhispr' } } });
+    expect(workflowSelection(saved, 'upload', 'private', 'none')).toEqual({ mode: 'local' });
+  });
+});
+
+describe('workflowSummary for switched-off workflows', () => {
+  const groq = { mode: 'providers' as const, providerId: 'groq', modelId: 'llama' };
+
+  it('says Off for Note Chat and the Voice Assistant switched off, even with a key missing', () => {
+    const saved = config({
+      defaultMode: 'cloud',
+      noteChatEnabled: false,
+      dictationAgentEnabled: false,
+      inference: { noteChat: groq, agent: groq },
+    });
+    expect(workflowSummary(saved, 'noteChat', 'cloud', { keyMissing: true })).toBe('Off');
+    expect(workflowSummary(saved, 'agent', 'cloud', { keyMissing: true })).toBe('Off');
+  });
+
+  it('keeps Note Chat on when only the Voice Assistant is switched off', () => {
+    const saved = config({ defaultMode: 'cloud', dictationAgentEnabled: false });
+    expect(workflowSummary(saved, 'noteChat', 'cloud')).toBe('On-Device');
+  });
+
+  it('says the Voice Assistant is Off in Local Mode, which turns it off', () => {
+    expect(workflowSummary(config({}), 'agent', 'private')).toBe('Off');
+  });
+});
+
+// Stale official sessions cannot opt the new independent Note Chat workflow into hosted inference.
 it.each(['none', 'session', 'account'] as const)(
-  'keeps all unset Local Mode workflows on this phone with %s access',
+  'keeps every unset Local Mode workflow local with %s access',
   (cloudAccess) => {
-    for (const scope of ['dictation', 'upload', 'cleanup', 'notes', 'agent'] as const) {
+    for (const scope of ['dictation', 'upload', 'cleanup', 'notes', 'noteChat', 'agent'] as const) {
       expect(unsetSelection(scope, 'private', cloudAccess)).toEqual({ mode: 'local' });
-      expect(workflowSummary(config({}), scope, 'private', { cloudAccess })).toBe('On-Device');
     }
   },
 );

@@ -744,18 +744,15 @@ describe('NoteEditorScreen note chat', () => {
     expect(queryByTestId('chat-suggestion-Key decisions')).toBeNull();
   });
 
-  it.each([
-    ['note chat is off', { noteChatEnabled: false }],
-    ['the old shared switch was turned off', { dictationAgentEnabled: false }],
-  ])('hides every Ask entry point when %s', (_label, settings) => {
-    Object.assign(mockConfigState.config, settings);
+  it('hides every Ask entry point when note chat is off', () => {
+    Object.assign(mockConfigState.config, { noteChatEnabled: false });
     const { queryByText, queryByTestId } = render(<NoteEditorScreen />);
     expect(queryByText('Ask about this note')).toBeNull();
     expect(queryByTestId(PILL)).toBeNull();
   });
 
   it('keeps note chat when only the voice assistant is off', () => {
-    Object.assign(mockConfigState.config, { dictationAgentEnabled: false, noteChatEnabled: true });
+    Object.assign(mockConfigState.config, { dictationAgentEnabled: false });
     const { getByTestId } = render(<NoteEditorScreen />);
     expect(getByTestId(PILL)).toBeTruthy();
   });
@@ -1008,19 +1005,29 @@ describe('NoteEditorScreen On-Device and provider routes', () => {
     expect(labels).toEqual(['Cancel', 'Enable Local AI', 'Use Groq Once']);
   });
 
-  it('lets a signed-out user chat with a note when chat is On-Device', async () => {
-    mockAuthState.user = null;
-    mockConfigState.config.inference = { agent: { mode: 'local' } };
-    (ReasoningService.chatOverNote as jest.Mock).mockResolvedValue({ text: 'Answer', model: 'x' });
-    const { getByTestId } = render(<NoteEditorScreen />);
-    fireEvent.changeText(getByTestId('chat-draft'), 'Who owns the launch?');
-    await act(async () => {
-      fireEvent.press(getByTestId('chat-send'));
-    });
-    await waitFor(() => expect(ReasoningService.chatOverNote).toHaveBeenCalledTimes(1));
-    expect(alertSpy).not.toHaveBeenCalled();
-    expect(mockRegisterSuperwallGate).not.toHaveBeenCalled();
-  });
+  it.each([
+    ['saved On-Device', { mode: 'local' as const }],
+    ['unset', undefined],
+    ['legacy hosted', { mode: 'openwhispr' as const }],
+  ])(
+    'lets a signed-out user chat with a note when the chat selection is %s',
+    async (_label, selection) => {
+      mockAuthState.user = null;
+      mockConfigState.config.inference = selection ? { noteChat: selection } : undefined;
+      (ReasoningService.chatOverNote as jest.Mock).mockResolvedValue({
+        text: 'Answer',
+        model: 'x',
+      });
+      const { getByTestId } = render(<NoteEditorScreen />);
+      fireEvent.changeText(getByTestId('chat-draft'), 'Who owns the launch?');
+      await act(async () => {
+        fireEvent.press(getByTestId('chat-send'));
+      });
+      await waitFor(() => expect(ReasoningService.chatOverNote).toHaveBeenCalledTimes(1));
+      expect(alertSpy).not.toHaveBeenCalled();
+      expect(mockRegisterSuperwallGate).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe('NoteEditorScreen body tabs', () => {

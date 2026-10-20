@@ -21,7 +21,6 @@ jest.mock('@/services/transcription/TranscriptionService', () => ({
 jest.mock('@/lib/cleanupTranscript', () => ({
   cleanupTranscript: jest.fn(async (text: string) => `cleaned:${text}`),
   CLEANUP_TIMEOUT_MS: 12_000,
-  AGENT_ACTION_TIMEOUT_MS: 30_000,
 }));
 jest.mock('@/lib/permissions', () => ({
   isNoSpeechError: jest.fn(() => false),
@@ -78,7 +77,6 @@ describe('transcribeAndCleanup with a custom cleanup prompt', () => {
         audioUri: 'file://a.wav',
         provider: 'cloud',
         cleanupRoute: { mode: 'openwhispr', scope: 'cleanup' },
-        agentRoute: { mode: 'openwhispr', scope: 'agent' },
         requestContext,
         keyboardTone: 'default',
       });
@@ -96,7 +94,6 @@ describe('transcribeAndCleanup with a custom cleanup prompt', () => {
       audioUri: 'file://a.wav',
       provider: 'cloud',
       cleanupRoute: { mode: 'openwhispr', scope: 'cleanup' },
-      agentRoute: { mode: 'openwhispr', scope: 'agent' },
       requestContext: 'recording',
     });
     expect(mockFused).toHaveBeenCalled();

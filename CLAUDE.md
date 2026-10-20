@@ -181,6 +181,7 @@ OpenWhispr is an Electron-based desktop dictation application that uses whisper.
 - **localEmbeddings.js**: Local text embedding via ONNX Runtime + all-MiniLM-L6-v2 (384-dim vectors)
 - **vectorIndex.js**: Qdrant collection management — upsert, delete, search
 - **windowConfig.js**: Centralized window configuration
+- **plasmaWorkAreas.js**: Per-monitor work areas on KDE Plasma. On X11 and XWayland, Chromium clips only the primary display with the single root `_NET_WORKAREA`, which KWin builds from every monitor's panels at once (#1110). This asks plasmashell over D-Bus (`evaluateScript`) for each screen's always-visible panels and rebuilds each display's `workArea` for the dictation pill, its companion windows and dragging. On X11, Qt reports a screen's origin in device pixels and only its size scaled, so those origins are divided by the display scale before matching. It refreshes on display events and each time a dictation shows the pill, retrying after 1, 5 and 15 s when plasmashell isn't ready; a display event starts those retries over. An auto-placed pill re-anchors when the result changes; a dragged one stays put. With a single display, or outside Linux + KDE, Chromium's work area is used as is
 - **windowManager.js**: Window creation and lifecycle management
 - **cliBridge.js**: Loopback HTTP server on ports 8200–8219, bearer-token auth (token at `~/.openwhispr/cli-bridge.json`), 127.0.0.1-only. Used by the unified CLI to talk to a running desktop app. `POST /v1/transcribe` takes a file **path** (never audio) and runs the user's downloaded local model through `IPCHandlers.transcribeLocalFile`, approving the path with `approveAudioPath` first; `GET /v1/transcribe/models` lists local models with download state and the app's default (`localTranscriptionModels.js`, read from the `.env` pre-warm values).
 - **connectors/**: Agent connectors
@@ -453,7 +454,7 @@ Non-secret env vars persisted to `.env` (via `saveAllKeysToEnvFile()`):
     - Gemini 3.5 Flash (`gemini-3.5-flash`) - Latest fast, high-capability Gemini model
     - Gemini 3.5 Flash Lite (`gemini-3.5-flash-lite`) - Fastest, most cost-effective 3.5 model
     - Gemini 3.1 Pro (`gemini-3.1-pro-preview`) - Most capable Gemini model
-    - Gemini 3.1 Flash Lite (`gemini-3.1-flash-lite`) - Frontier-class performance at low cost (no thinking support, so no `supportsThinking` flag)
+    - Gemini 3.1 Flash Lite (`gemini-3.1-flash-lite`) - Frontier-class performance at low cost. It thinks, and requests that aren't streamed pin it to `minimal` unless a reasoning effort is picked; it has no `supportsThinking` flag, so Settings shows the effort picker rather than the thinking toggle
     - Gemini 3 Flash (`gemini-3-flash-preview`) - Ultra-fast, high-capability next-gen model
     - Gemini 2.5 Flash Lite (`gemini-2.5-flash-lite`) - Lowest latency and cost (retired for new API keys; kept for existing ones)
     - Gemma 4 (`gemma-4-31b-it`, `gemma-4-26b-a4b-it`) - Google's open Gemma 4 models served through the Gemini API
@@ -473,7 +474,7 @@ All desktop AI model definitions are centralized in `src/models/modelRegistryDat
 **Key files:**
 
 - `src/models/modelRegistryData.json` - Single source of truth for all desktop models
-- `openwhispr-mobile/src/config/providerCatalog.json` - Mobile's trimmed copy of the OpenAI and Groq entries. It, mobile's endpoint rules and its agent prompt (`openwhispr-mobile/src/config/prompts/defaultPrompts.json`) are copies, not shared code, so update them by hand when desktop's change (the catalog is covered in `openwhispr-mobile/CONTRIBUTING.md`)
+- `openwhispr-mobile/src/config/providerCatalog.json` - Mobile's trimmed copy of the OpenAI and Groq entries. It, mobile's endpoint rules and its cleanup prompt (`openwhispr-mobile/src/config/prompts/defaultPrompts.json`) are copies, not shared code, so update them by hand when desktop's change (the catalog is covered in `openwhispr-mobile/CONTRIBUTING.md`)
 - `src/models/ModelRegistry.ts` - TypeScript wrapper with helper methods; also derives
   `REASONING_PROVIDERS` (`buildReasoningProviders()`), consumed by the model pickers
 - `src/models/providerDefaultModel.ts` - `pickProviderDefaultModel()`; with no
@@ -639,6 +640,7 @@ On GNOME Wayland, Electron's `globalShortcut` API doesn't work due to Wayland's 
 - Electron format: `F8`, `CommandOrControl+Shift+Space`
 - GNOME format: `F8`, `<Control><Shift>space`
 - Backtick (`) → `grave` in GNOME keysym format
+- F13-F24 bind the keysym the active keymap gives that key (`xkbcomp -xkb $DISPLAY -`, xkb keys `<FK13>`-`<FK24>`), for gsettings and the Hold portal alike: stock xkeyboard-config sends `XF86Launch7` for F16 and has no `F16` keysym, so GNOME can't grab `F16` (#1716). A key with no keysym (`keysym_missing`, e.g. stock F19/F24) or one gsd-media-keys already binds (`keysym_reserved`, e.g. F13 → `XF86Tools` opens Settings) is refused with a message. An unreadable keymap keeps the F-key name
 
 ### 15. Hyprland Wayland Global Hotkeys
 
@@ -727,7 +729,7 @@ Detects meetings via three independent sources, orchestrated by `MeetingDetectio
 
 ### 17. Voice Assistant Hotkey
 
-A dedicated global hotkey that starts a dictation whose transcript is sent straight to the voice assistant as a command — no wake word ("Hey [AgentName]") needed — and that always bypasses the cleanup model. With auto-paste enabled, a caret verified as writable at capture time (an opaque `caret` session in `selectionManager.js`, revalidated before pasting) receives the completed answer and the pill returns to idle. A dormant macOS accessibility tree reports "unknown": synthetic copy can still recover selected text, but cannot establish a safe caret destination. Unknown targets therefore stay on the panel route, since they can also be integrated terminals, pages without inputs, or fields with selections hidden by clipboard capture. A verified caret whose accessibility becomes unknown before delivery falls back the same way. Terminal and secure-field checks still apply to verified targets. Otherwise the answer streams into a floating assistant panel attached to the dictation pill (there is no separate assistant window) and, with auto-paste enabled, is also copied to the clipboard for manual paste (the Copy button confirms for six seconds). The pill window is content-protected while the panel is open (the panel never appears in screen shares).
+A dedicated global hotkey that starts a dictation whose transcript is sent straight to the voice assistant as a command — no wake word ("Hey [AgentName]") needed — and that always bypasses the cleanup model. With auto-paste enabled, a caret verified as writable at capture time (an opaque `caret` session in `selectionManager.js`, revalidated before pasting) receives the completed answer and the pill returns to idle. A dormant macOS accessibility tree reports "unknown": synthetic copy can still recover selected text, but cannot establish a safe caret destination. Unknown targets therefore stay on the panel route, since they can also be integrated terminals, pages without inputs, or fields with selections hidden by clipboard capture. A verified caret whose accessibility becomes unknown before delivery falls back the same way. Terminal and secure-field checks still apply to verified targets. On Linux the caret is verified by `linux-text-monitor --probe-editable <pid>`, which answers only for the focused field in that process's active window; the pid comes from the target (its AT-SPI pid, `xdotool`/`kdotool getwindowpid`, or `hyprctl activewindow`), and a target whose pid can't be read stays on the panel route. Otherwise the answer streams into a floating assistant panel attached to the dictation pill (there is no separate assistant window) and, with auto-paste enabled, is also copied to the clipboard for manual paste (the Copy button confirms for six seconds). The pill window is content-protected while the panel is open (the panel never appears in screen shares).
 
 **Flow**:
 

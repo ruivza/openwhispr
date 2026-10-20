@@ -67,6 +67,7 @@ import { GlassBackButton } from '@/components/ui/GlassBackButton';
 import { TabScreenHeader } from '@/components/ui/TabScreenHeader';
 import { buildNoteShareContent, exportNote } from '@/lib/noteExport';
 import { AppFont } from '@/lib/fonts';
+import { localSelection } from '@/lib/fork';
 import { makeContentHash, safeHaptics } from '@/lib/utils';
 import { isManagedMeetingAudioUri } from '@/lib/transcriptAudio';
 import { BRAND } from '@/config/colors';
@@ -175,10 +176,11 @@ export default function NoteEditorScreen() {
   const autoLearnEnabled = useConfigStore((s) => s.config?.autoLearnCorrections ?? true);
   const notesMode = useConfigStore((s) => s.config?.inference?.notes?.mode);
   const notesProviderId = useConfigStore((s) => s.config?.inference?.notes?.providerId);
-  const chatMode = useConfigStore((s) => s.config?.inference?.agent?.mode);
+  const chatMode = useConfigStore((s) => localSelection(s.config?.inference?.noteChat).mode);
   const chatEnabled = useConfigStore((s) => (s.config ? isNoteChatEnabled(s.config) : true));
   const providerNotes = notesMode === 'providers';
   // Only an unset or OpenWhispr chat route reaches Cloud, so only it needs an account and the paywall.
+  // This fork resolves unset and legacy hosted selections to On-Device before this gate.
   const cloudChat = chatMode !== 'providers' && chatMode !== 'local';
   const dictionaryEntries = useDictionaryStore((s) => s.entries);
   const dictionaryWords = useMemo(() => dictionaryEntries.map((e) => e.word), [dictionaryEntries]);

@@ -34,6 +34,8 @@ it('upgrades a Local Mode config from before the Cloud defaults before anything 
     defaultMode: 'private',
     localModeUpgraded: true,
     cloudBackupEnabled: false,
+    noteChatSplit: true,
+    noteChatEnabled: true,
     inference: {
       dictation: { mode: 'local' },
       upload: { mode: 'local' },
@@ -59,7 +61,12 @@ it('still upgrades the loaded config when saving it fails', async () => {
 });
 
 it('leaves an upgraded config alone', async () => {
-  const config = { defaultMode: 'private', localModeUpgraded: true, cloudBackupEnabled: false };
+  const config = {
+    defaultMode: 'private',
+    localModeUpgraded: true,
+    cloudBackupEnabled: false,
+    noteChatSplit: true,
+  };
   mockGetConfig.mockResolvedValue(config);
 
   await useConfigStore.getState().loadConfig();
@@ -78,6 +85,7 @@ it('starts a new install with local-only defaults and cleanup enabled', async ()
     cloudBackupEnabled: false,
     appleLocalIntelligenceEnabled: true,
     localModeUpgraded: true,
+    noteChatSplit: true,
   });
   expect(mockSaveConfig).not.toHaveBeenCalled();
 });
@@ -163,5 +171,63 @@ it('keeps a saved BYOK selection when an update attempts to re-enable official c
     cloudBackupEnabled: false,
     localModeUpgraded: true,
     inference: { dictation: savedProvider },
+  });
+});
+
+// Note chat once shared the voice assistant's setting, so it keeps that setting after updating.
+it('splits note chat before anything reads the config without restoring hosted services', async () => {
+  const config = {
+    defaultMode: 'cloud',
+    localModeUpgraded: true,
+    inference: { agent: savedProvider },
+    rememberedInference: { agent: { custom: savedProvider } },
+  };
+  mockGetConfig.mockResolvedValue(config);
+
+  await useConfigStore.getState().loadConfig();
+
+  const split = {
+    ...config,
+    defaultMode: 'private',
+    cloudBackupEnabled: false,
+    noteChatSplit: true,
+    noteChatEnabled: true,
+    inference: { agent: savedProvider, noteChat: savedProvider },
+    rememberedInference: { agent: { custom: savedProvider }, noteChat: { custom: savedProvider } },
+  };
+  expect(useConfigStore.getState().config).toEqual(split);
+  expect(mockSaveConfig).toHaveBeenCalledWith(split);
+});
+
+it('keeps a separately saved note-chat route and its remembered choices during migration', async () => {
+  const noteChatProvider = {
+    ...savedProvider,
+    modelId: 'note-chat-model',
+    credentialRef: 'note-chat-key',
+  };
+  mockGetConfig.mockResolvedValue({
+    defaultMode: 'providers',
+    localModeUpgraded: true,
+    noteChatEnabled: false,
+    dictationAgentEnabled: true,
+    inference: { agent: savedProvider, noteChat: noteChatProvider },
+    rememberedInference: {
+      agent: { custom: savedProvider },
+      noteChat: { custom: noteChatProvider },
+    },
+  });
+
+  await useConfigStore.getState().loadConfig();
+
+  expect(useConfigStore.getState().config).toMatchObject({
+    defaultMode: 'providers',
+    cloudBackupEnabled: false,
+    noteChatSplit: true,
+    noteChatEnabled: false,
+    inference: { agent: savedProvider, noteChat: noteChatProvider },
+    rememberedInference: {
+      agent: { custom: savedProvider },
+      noteChat: { custom: noteChatProvider },
+    },
   });
 });

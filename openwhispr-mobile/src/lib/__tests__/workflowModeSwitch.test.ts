@@ -28,13 +28,32 @@ jest.mock('@/lib/privateMode', () => ({
   getPrivateModeUnavailableMessage: () => 'Native modules are missing.',
 }));
 jest.mock('@/lib/localReasoning', () => ({
-  getLocalReasoningReadiness: () => mockLocalReasoningReadiness(),
+  ...jest.requireActual('@/lib/localReasoning'),
+  getLocalReasoningReadiness: (...args: unknown[]) => mockLocalReasoningReadiness(...args),
   getLocalReasoningUnavailableMessage: () => 'Apple Intelligence is turned off.',
 }));
 
-import { pickLocalModel, switchWorkflowMode } from '../workflowModeSwitch';
+import {
+  leavingLocalModeWithLocalReasoning,
+  pickLocalModel,
+  switchWorkflowMode,
+} from '../workflowModeSwitch';
 
 let alert: jest.SpyInstance;
+
+// Turning Local Mode on from Cloud moves only dictation; the rest stay on Cloud, where they ran.
+const LOCAL_FROM_CLOUD = {
+  defaultMode: 'private',
+  inference: {
+    dictation: { mode: 'local' },
+    upload: { mode: 'local' },
+    cleanup: { mode: 'local' },
+    notes: { mode: 'local' },
+    noteChat: { mode: 'local' },
+    agent: { mode: 'local' },
+  },
+  pinnedInference: ['upload', 'cleanup', 'notes', 'noteChat', 'agent'],
+};
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -50,7 +69,7 @@ it.each([null, { id: 'a', isAnonymous: true }, { id: 'u' }])(
   'refuses hosted workflows for every legacy account state: %j',
   async (user) => {
     mockUser = user;
-    for (const scope of ['dictation', 'upload', 'cleanup', 'notes', 'agent'] as const) {
+    for (const scope of ['dictation', 'upload', 'cleanup', 'notes', 'noteChat', 'agent'] as const) {
       await expect(switchWorkflowMode(scope, 'openwhispr')).resolves.toBe('refused');
     }
     expect(alert).toHaveBeenCalledWith(
@@ -66,10 +85,7 @@ it.each([null, { id: 'a', isAnonymous: true }, { id: 'u' }])(
 it('switches dictation to On-Device along with the app mode', async () => {
   await expect(switchWorkflowMode('dictation', 'local')).resolves.toBe('switched');
   expect(mockSetActiveMode).toHaveBeenCalledWith('private', true);
-  expect(mockUpdateConfig).toHaveBeenCalledWith({
-    defaultMode: 'private',
-    inference: { dictation: { mode: 'local' } },
-  });
+  expect(mockUpdateConfig).toHaveBeenCalledWith(LOCAL_FROM_CLOUD);
 });
 
 it('opens the model list when no on-device transcription model is downloaded', async () => {
@@ -97,12 +113,33 @@ it('switches uploads to On-Device with the model picked for them before', async 
   expect(mockSetActiveMode).not.toHaveBeenCalled();
 });
 
-it('explains why a text workflow cannot run on-device', async () => {
-  mockLocalReasoningReadiness.mockResolvedValue({ status: 'appleIntelligenceOff' });
-  await expect(switchWorkflowMode('cleanup', 'local')).resolves.toBe('refused');
-  expect(alert).toHaveBeenCalledWith('On-Device Unavailable', 'Apple Intelligence is turned off.');
-  expect(mockUpdateConfig).not.toHaveBeenCalled();
-});
+// Settings can fix these, so the page finishes the switch once Apple Intelligence is ready.
+it.each(['appleIntelligenceOff', 'modelNotReady'])(
+  'waits for Apple Intelligence when it is %s',
+  async (status) => {
+    mockLocalReasoningReadiness.mockResolvedValue({ status });
+    await expect(switchWorkflowMode('cleanup', 'local')).resolves.toBe('not-ready');
+    expect(alert).toHaveBeenCalledWith(
+      'On-Device Unavailable',
+      'Apple Intelligence is turned off. Keep this page open and On-Device turns on once Apple Intelligence is ready.',
+    );
+    expect(mockUpdateConfig).not.toHaveBeenCalled();
+  },
+);
+
+// Nothing in iOS Settings makes these ready, so the page must not wait for them.
+it.each(['unsupportedDevice', 'disabled', 'unavailable'])(
+  'refuses a text workflow on-device when Apple Intelligence is %s',
+  async (status) => {
+    mockLocalReasoningReadiness.mockResolvedValue({ status });
+    await expect(switchWorkflowMode('cleanup', 'local')).resolves.toBe('refused');
+    expect(alert).toHaveBeenCalledWith(
+      'On-Device Unavailable',
+      'Apple Intelligence is turned off.',
+    );
+    expect(mockUpdateConfig).not.toHaveBeenCalled();
+  },
+);
 
 it('switches a text workflow to On-Device when Apple Intelligence is ready', async () => {
   await expect(switchWorkflowMode('notes', 'local')).resolves.toBe('switched');
@@ -169,17 +206,60 @@ describe('switching dictation', () => {
   it('to On-Device turns Local Mode on', async () => {
     await expect(switchWorkflowMode('dictation', 'local')).resolves.toBe('switched');
     expect(mockSetActiveMode).toHaveBeenCalledWith('private', true);
-    expect(mockUpdateConfig).toHaveBeenCalledWith({
-      defaultMode: 'private',
-      inference: { dictation: { mode: 'local' } },
-    });
+    expect(mockUpdateConfig).toHaveBeenCalledWith(LOCAL_FROM_CLOUD);
   });
 
-  it('refuses a legacy OpenWhispr Cloud choice without changing Local Mode', async () => {
+  // Only dictation moves: note formatting stays on this phone, where Local Mode ran it, and with an
+  // account, uploads and cleanup stay on Cloud, where Local Mode ran them. Note chat, which Local
+  // Mode asked about before sending it to Cloud, stays on this phone.
+  it('refuses a hosted dictation choice without changing any workflow', async () => {
     mockActiveMode = 'private';
     mockConfig = { defaultMode: 'private', inference: { dictation: { mode: 'local' } } };
     await expect(switchWorkflowMode('dictation', 'openwhispr')).resolves.toBe('refused');
     expect(mockSetActiveMode).not.toHaveBeenCalled();
+    expect(mockUpdateConfig).not.toHaveBeenCalled();
+    expect(mockLocalReasoningReadiness).not.toHaveBeenCalled();
+  });
+
+  it('refuses hosted fallback when Apple Intelligence cannot run', async () => {
+    mockLocalReasoningReadiness.mockResolvedValue({ status: 'unavailable', tokenCounting: false });
+    mockActiveMode = 'private';
+    await expect(switchWorkflowMode('dictation', 'openwhispr')).resolves.toBe('refused');
+    expect(mockUpdateConfig).not.toHaveBeenCalled();
+  });
+
+  it('asks afresh about local reasoning only when leaving Local Mode for BYOK', async () => {
+    await expect(
+      leavingLocalModeWithLocalReasoning('dictation', 'private', 'providers'),
+    ).resolves.toBe(true);
+    expect(mockLocalReasoningReadiness).toHaveBeenCalledWith({ refresh: true });
+    mockLocalReasoningReadiness.mockClear();
+    await expect(leavingLocalModeWithLocalReasoning('dictation', 'private', 'local')).resolves.toBe(
+      false,
+    );
+    expect(mockLocalReasoningReadiness).not.toHaveBeenCalled();
+  });
+
+  it('builds saved config after waiting for the current local model readiness', async () => {
+    mockActiveMode = 'providers';
+    const provider = {
+      mode: 'providers',
+      providerId: 'groq',
+      modelId: 'llama-3.3-70b-versatile',
+      credentialRef: 'provider.groq',
+    };
+    mockPrivateReadiness.mockImplementation(async () => {
+      mockConfig = { defaultMode: 'providers', inference: { noteChat: provider } };
+      return { status: 'ready' };
+    });
+    await expect(switchWorkflowMode('dictation', 'local')).resolves.toBe('switched');
+    expect(mockUpdateConfig.mock.calls[0][0].inference.noteChat).toEqual(provider);
+  });
+
+  it('keeps hosted dictation refused for an anonymous session', async () => {
+    mockUser = { id: 'a', isAnonymous: true };
+    mockActiveMode = 'private';
+    await expect(switchWorkflowMode('dictation', 'openwhispr')).resolves.toBe('refused');
     expect(mockUpdateConfig).not.toHaveBeenCalled();
   });
 
@@ -189,6 +269,8 @@ describe('switching dictation', () => {
     ['local', { mode: 'local' }],
     ['local', { mode: 'openwhispr' }],
     ['local', { mode: 'providers', providerId: 'openai', modelId: 'gpt-5-mini' }],
+    ['openwhispr', { mode: 'local' }],
+    ['openwhispr', { mode: 'openwhispr' }],
   ] as const)('to %s keeps a saved %j cleanup', async (mode, cleanup) => {
     const from = mode === 'local' ? 'cloud' : 'private';
     mockActiveMode = from;
@@ -196,7 +278,13 @@ describe('switching dictation', () => {
       defaultMode: from,
       inference: { dictation: { mode: mode === 'local' ? 'openwhispr' : 'local' }, cleanup },
     };
-    await expect(switchWorkflowMode('dictation', mode)).resolves.toBe('switched');
-    expect(mockUpdateConfig.mock.calls[0][0].inference.cleanup).toEqual(cleanup);
+    if (mode === 'openwhispr') {
+      await expect(switchWorkflowMode('dictation', mode)).resolves.toBe('refused');
+      expect(mockUpdateConfig).not.toHaveBeenCalled();
+      expect(mockConfig?.inference).toEqual(expect.objectContaining({ cleanup }));
+    } else {
+      await expect(switchWorkflowMode('dictation', mode)).resolves.toBe('switched');
+      expect(mockUpdateConfig.mock.calls[0][0].inference.cleanup).toEqual(cleanup);
+    }
   });
 });

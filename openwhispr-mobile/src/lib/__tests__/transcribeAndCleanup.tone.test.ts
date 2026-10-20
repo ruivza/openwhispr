@@ -87,7 +87,6 @@ describe('transcribeAndCleanup tone', () => {
       audioUri: 'file://a.wav',
       provider: 'cloud',
       cleanupRoute: { mode: 'openwhispr', scope: 'cleanup' },
-      agentRoute: { mode: 'openwhispr', scope: 'agent' },
       requestContext: 'keyboard',
       keyboardTone: 'formal',
     });
@@ -121,7 +120,6 @@ describe('transcribeAndCleanup tone', () => {
       audioUri: 'file://a.wav',
       provider: 'cloud',
       cleanupRoute: { mode: 'openwhispr', scope: 'cleanup' },
-      agentRoute: { mode: 'openwhispr', scope: 'agent' },
       requestContext: 'keyboard',
       keyboardTone: 'formal',
     });
@@ -144,7 +142,6 @@ describe('transcribeAndCleanup tone', () => {
       audioUri: 'file://a.wav',
       provider: 'cloud',
       cleanupRoute: { mode: 'openwhispr', scope: 'cleanup' },
-      agentRoute: { mode: 'openwhispr', scope: 'agent' },
       requestContext: 'keyboard',
       keyboardTone: 'default',
     });
@@ -169,7 +166,6 @@ describe('transcribeAndCleanup tone', () => {
         audioUri: 'file://a.wav',
         provider: 'cloud',
         cleanupRoute: { mode: 'openwhispr', scope: 'cleanup' },
-        agentRoute: { mode: 'openwhispr', scope: 'agent' },
         requestContext,
         keyboardTone: 'formal',
       });
@@ -228,7 +224,6 @@ describe('transcribeAndCleanup tone', () => {
     await transcribeAndCleanup({
       audioUri: 'file://a.wav',
       provider: 'cloud',
-      agentRoute: { mode: 'openwhispr', scope: 'agent' },
       requestContext: 'keyboard',
       keyboardTone: 'formal',
       cleanupRoute: PROVIDER_ROUTE,

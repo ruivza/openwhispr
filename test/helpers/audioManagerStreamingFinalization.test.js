@@ -37,7 +37,7 @@ function createFinalizingManager(AudioManager) {
     _activeTranscriptionAbortController: null,
     _streamingSessionGeneration: 7,
     _activeStreamingSessionId: 7,
-    _streamingUsesOpenWhisprCloud: false,
+    _streamingMeteredByCloud: false,
     _streamingMicSwapPromise: null,
     streamingFinalText: "",
     streamingPartialText: "",
@@ -103,14 +103,23 @@ test("streamed selection failures keep local error parameters and recovery detai
   manager.processAgentCommand = async () => {
     throw Object.assign(new Error("too long"), fields, { selectionEditFatal: true });
   };
+  const saved = [];
+  manager.saveFailedTranscription = async (...args) => {
+    saved.push(args);
+  };
   manager.onError = (error) => errors.push(error);
   manager.onTranscriptionComplete = (result) => published.push(result);
   assert.equal(await manager.stopStreamingRecording(), false);
   assert.equal(errors.length, 1);
   for (const [key, value] of Object.entries(fields)) assert.deepEqual(errors[0][key], value);
   assert.equal(errors[0].selectionEditFatal, true);
+  assert.equal(errors[0].transcript, "replace this");
   assert.deepEqual(published, []);
   assert.equal(manager.pendingSelectionEdit, null);
+  // The streamed transcript is kept in a failed history entry, as batch keeps it (#2676).
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0][1], "CONTEXT_TOO_LARGE");
+  assert.deepEqual(saved[0][3], { transcript: "replace this" });
 });
 
 test("streaming finalization is immediately processing and cannot start another session", async (t) => {
@@ -174,6 +183,84 @@ test("streaming completion keeps the recording occurrence time", async (t) => {
   await manager.stopStreamingRecording();
 
   assert.equal(completion.analyticsOccurredAt, new Date(recordingStartedAt).toISOString());
+});
+
+// Starts a stream on `providerName` under `startMode`, switches the saved mode to
+// `stopMode` mid-recording, and stops with a streamed transcript.
+async function streamAcrossModeSwitch(t, AudioManager, { providerName, startMode, stopMode }) {
+  globalThis.__streamingFinalizationSettings = {
+    ...globalThis.__streamingFinalizationSettings,
+    cloudTranscriptionMode: startMode,
+    isSignedIn: true,
+    insightsSyncEnabled: true,
+  };
+  installCapture(t);
+  const provider = startingOrukeetProvider({
+    finalizeAcknowledged: false,
+    awaitsFinalTranscript: false,
+    finalize() {},
+  });
+  const { manager, completions } = createStartingManager(AudioManager, { providerName, provider });
+  manager.finalizeChineseScript = async (text) => text;
+  const usageCalls = [];
+  globalThis.window.electronAPI.cloudStreamingUsage = async (...args) => {
+    usageCalls.push(args);
+    return { success: true };
+  };
+  const events = [];
+  globalThis.window.dispatchEvent = (event) => events.push(event.type);
+
+  assert.equal(await manager.startStreamingRecording(), true);
+  globalThis.__streamingFinalizationSettings = {
+    ...globalThis.__streamingFinalizationSettings,
+    cloudTranscriptionMode: stopMode,
+  };
+  manager.streamingFinalText = "Words from this stream.";
+  await manager.stopStreamingRecording();
+  await new Promise(setImmediate);
+  return { completion: completions[0], usageCalls, events };
+}
+
+test("a stream counts toward Cloud usage by the credentials it started on", async (t) => {
+  const AudioManager = await loadManagerClass(t);
+
+  await t.test("a Cloud stream switched to own keys mid-recording is still counted", async (t) => {
+    const { usageCalls, events } = await streamAcrossModeSwitch(t, AudioManager, {
+      providerName: "gemini",
+      startMode: "openwhispr",
+      stopMode: "byok",
+    });
+    assert.equal(usageCalls.length, 1);
+    assert.equal(usageCalls[0][0], "Words from this stream.");
+    assert.equal(usageCalls[0][2].sttProvider, "gemini");
+    assert.equal(usageCalls[0][2].sendLogs, false);
+    assert.deepEqual(events, ["usage-changed"]);
+  });
+
+  // #2558: a Free user's own Gemini key filled the Cloud word allowance.
+  await t.test("an own-key stream switched to Cloud mid-recording is not counted", async (t) => {
+    const { completion, usageCalls, events } = await streamAcrossModeSwitch(t, AudioManager, {
+      providerName: "gemini",
+      startMode: "byok",
+      stopMode: "openwhispr",
+    });
+    assert.equal(completion.text, "Words from this stream.");
+    // The opted-in insights sync pushes the local row under these.
+    assert.ok(completion.clientTranscriptionId);
+    assert.ok(completion.analyticsOccurredAt);
+    assert.deepEqual(usageCalls, []);
+    assert.deepEqual(events, []);
+  });
+
+  await t.test("tinfoil in Cloud mode streams on the user's key and is not counted", async (t) => {
+    const { usageCalls, events } = await streamAcrossModeSwitch(t, AudioManager, {
+      providerName: "tinfoil-realtime",
+      startMode: "openwhispr",
+      stopMode: "openwhispr",
+    });
+    assert.deepEqual(usageCalls, []);
+    assert.deepEqual(events, []);
+  });
 });
 
 test("only a provider that prefers its stop transcript pastes it over the streamed finals", async (t) => {
@@ -545,7 +632,7 @@ test("an older streaming session cannot clean up the active session listeners or
   const manager = Object.assign(Object.create(AudioManager.prototype), {
     _activeStreamingSessionId: 12,
     _activeStreamingProviderName: "orukeet",
-    _streamingUsesOpenWhisprCloud: true,
+    _streamingMeteredByCloud: true,
     streamingCleanupFns: [() => assert.fail("stale cleanup ran")],
     streamingFinalText: "current transcript",
     streamingPartialText: "current partial",
@@ -560,7 +647,7 @@ test("an older streaming session cannot clean up the active session listeners or
   assert.equal(manager.streamingFinalText, "current transcript");
   assert.equal(manager.streamingPartialText, "current partial");
   assert.equal(manager._activeStreamingProviderName, "orukeet");
-  assert.equal(manager._streamingUsesOpenWhisprCloud, true);
+  assert.equal(manager._streamingMeteredByCloud, true);
 });
 
 test("Orukeet commits only after the worklet flush and skips settling sleeps", async (t) => {
@@ -686,24 +773,54 @@ test("a no-final stream whose Cloud upload finds no speech keeps the recording q
   assert.deepEqual(completions, [{ success: true, text: "" }]);
 });
 
+test("a no-final stream whose upload transcribed but failed its selection edit keeps the text", async (t) => {
+  const AudioManager = await loadManagerClass(t);
+  globalThis.__streamingFinalizationSettings = {
+    ...globalThis.__streamingFinalizationSettings,
+    cloudTranscriptionMode: "openwhispr",
+    isSignedIn: true,
+  };
+  const { manager } = createFinalizingManager(AudioManager);
+  manager.recordingStartTime = Date.now() - 5000;
+  manager.mergeRecordedSegments = async () => new Blob([new Uint8Array(100)]);
+  const saved = [];
+  const errors = [];
+  manager.saveFailedTranscription = (...args) => saved.push(args);
+  manager.onError = (error) => errors.push(error);
+  manager.processWithOpenWhisprCloud = async () => {
+    const error = Object.assign(new Error("Selection edit failed"), {
+      selectionEditFatal: true,
+      code: "SELECTION_EDIT_CAPTURE_FAILED",
+    });
+    Object.defineProperty(error, "transcript", { value: "Fallback text" });
+    throw error;
+  };
+
+  await manager.stopStreamingRecording();
+
+  // Unlike a real transcription failure here, it is reported and kept as batch's is.
+  assert.deepEqual(
+    errors.map(({ code, transcript }) => [code, transcript]),
+    [["SELECTION_EDIT_CAPTURE_FAILED", "Fallback text"]]
+  );
+  assert.deepEqual(
+    saved.map((args) => [args[1], args[3].transcript]),
+    [["SELECTION_EDIT_CAPTURE_FAILED", "Fallback text"]]
+  );
+});
+
 test("Orukeet uses the acknowledged final even if the transcript event is delayed", async (t) => {
   const AudioManager = await loadManagerClass(t);
   const { manager } = createFinalizingManager(AudioManager);
+  manager.getStreamingProviderName = () => "orukeet";
   manager.getStreamingProvider = () => ({
     finalizeAcknowledged: true,
     finalize: async () => ({ success: true, text: "Acknowledged final" }),
     stop: async () => ({ success: true, text: "" }),
   });
-  let usageReported;
-  const usage = new Promise((resolve) => {
-    usageReported = resolve;
-  });
-  globalThis.window.electronAPI.cloudStreamingUsage = async () => ({ success: true });
-  globalThis.window.dispatchEvent = () => usageReported();
   const results = [];
   manager.onTranscriptionComplete = (result) => results.push(result);
   await manager.stopStreamingRecording();
-  await usage;
   assert.equal(results[0].text, "Acknowledged final");
 });
 
@@ -1460,8 +1577,8 @@ async function stopManagedDictation(
   };
   const { manager } = createFinalizingManager(AudioManager);
   manager.recordingStartTime = Date.now() - 8000;
-  manager._streamingUsesOpenWhisprCloud =
-    globalThis.__streamingFinalizationSettings.cloudTranscriptionMode !== "byok";
+  manager._streamingMeteredByCloud =
+    globalThis.__streamingFinalizationSettings.cloudTranscriptionMode === "openwhispr";
   manager.mergeRecordedSegments = async () => new Blob([new Uint8Array(100)]);
   manager.getStreamingProvider = () => orukeetProvider(final);
   manager.getStreamingProviderName = () => providerName;
@@ -1484,18 +1601,14 @@ async function stopManagedDictation(
     usage.push({ ...opts, text, seconds });
     return { success: true };
   };
-  let usageSettled;
-  const settled = new Promise((resolve) => {
-    usageSettled = resolve;
-  });
-  globalThis.window.dispatchEvent = () => usageSettled();
+  globalThis.window.dispatchEvent = () => true;
   const published = [];
   manager.onTranscriptionComplete = (result) => published.push(result);
   const errors = [];
   manager.onError = (error) => errors.push(error);
   const stopResult = await manager.stopStreamingRecording();
-  // Usage settles only after a non-empty transcript is published.
-  if (published.some((result) => result.text)) await settled;
+  // Usage is reported in the background after the transcript is published.
+  await new Promise(setImmediate);
   return { manager, uploads, reasonCalls, usage, published, errors, stopResult };
 }
 
@@ -1515,7 +1628,7 @@ test("streaming metering follows the provider session rather than settings chang
   const final = { success: true, text: "Completed dictation" };
   const byok = await stopManagedDictation(AudioManager, {
     final,
-    overrides: { _streamingUsesOpenWhisprCloud: false },
+    overrides: { _streamingMeteredByCloud: false },
   });
   assert.equal(byok.usage.length, 0);
   assert.equal(byok.published[0].text, final.text);
@@ -1523,7 +1636,7 @@ test("streaming metering follows the provider session rather than settings chang
   const managed = await stopManagedDictation(AudioManager, {
     final,
     settings: { cloudTranscriptionMode: "byok", insightsSyncEnabled: true },
-    overrides: { _streamingUsesOpenWhisprCloud: true },
+    overrides: { _streamingMeteredByCloud: true },
   });
   assert.equal(managed.usage.length, 1);
   assert.equal(managed.usage[0].sendLogs, false);
@@ -1536,6 +1649,8 @@ test("streaming metering follows the provider session rather than settings chang
     "audioSizeBytes",
     "audioFormat",
     "clientTotalMs",
+    "orukeetLanguageRouting",
+    "orukeetCleanup",
   ]) {
     assert.equal(Object.hasOwn(managed.usage[0], key), false, key);
   }
@@ -1570,13 +1685,13 @@ test("actual streaming startup excludes personal providers even with stale offic
       provider,
     });
     assert.equal(await manager.startStreamingRecording(), true);
-    assert.equal(manager._streamingUsesOpenWhisprCloud, expectedMetering, providerName);
+    assert.equal(manager._streamingMeteredByCloud, expectedMetering, providerName);
     manager.recordingStartTime = Date.now() - 8000;
     const before = usage.length;
     await manager.stopStreamingRecording();
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(usage.length - before, Number(expectedMetering), providerName);
-    assert.equal(manager._streamingUsesOpenWhisprCloud, false, "ended sessions clear metering");
+    assert.equal(manager._streamingMeteredByCloud, false, "ended sessions clear metering");
     assert.equal(completions[0].text, "Private dictation");
     assert.deepEqual(errors, []);
   }
@@ -1886,6 +2001,31 @@ test("an empty Orukeet final with a confident unsupported estimate still re-tran
   assert.equal(usage.length, 0);
 });
 
+test("a language re-transcription whose selection edit fails keeps Cloud's transcript", async (t) => {
+  const AudioManager = await loadManagerClass(t);
+  const saved = [];
+  const { published, errors } = await stopManagedDictation(AudioManager, {
+    final: JA_FINAL,
+    upload: async () => {
+      const error = Object.assign(new Error("Selection edit failed"), {
+        selectionEditFatal: true,
+        code: "SELECTION_EDIT_REASONING_FAILED",
+      });
+      // What processWithOpenWhisprCloud attaches before rethrowing.
+      Object.defineProperty(error, "transcript", { value: "明日の会議" });
+      Object.defineProperty(error, "transcriptClientId", { value: "cloud-client-id" });
+      throw error;
+    },
+    overrides: { saveFailedTranscription: (...args) => saved.push(args) },
+  });
+  assert.equal(errors[0].transcript, "明日の会議");
+  assert.deepEqual(
+    saved.map((args) => args[3]),
+    [{ transcript: "明日の会議", clientTranscriptionId: "cloud-client-id" }]
+  );
+  assert.deepEqual(published, []);
+});
+
 test("a selection edit that fails during the language re-transcription surfaces its error", async (t) => {
   const AudioManager = await loadManagerClass(t);
   const selectionEditFailure = () =>
@@ -1996,12 +2136,10 @@ test("language-score routing uses analyzed time and preserves explicit language,
       ...overrides,
     });
     assert.equal(r.uploads.length, 0, JSON.stringify(overrides));
-    if (
-      overrides.settings?.cloudTranscriptionMode === "byok" ||
-      overrides.providerName === "deepgram"
-    )
-      assert.equal(r.usage[0]?.orukeetLanguageRouting, undefined);
-    if (overrides.settings?.cloudTranscriptionMode === "byok") assert.equal(r.usage.length, 0);
+    // An own-key stream reports no Cloud usage (#2558).
+    if (overrides.settings?.cloudTranscriptionMode === "byok") assert.deepEqual(r.usage, []);
+    if (overrides.providerName === "deepgram")
+      assert.equal(r.usage[0].orukeetLanguageRouting, undefined);
   }
 });
 
@@ -2156,11 +2294,14 @@ test("ordinary Cloud streams meter processed text while BYOK streams keep usage 
       },
     });
     assert.equal(result.published[0].text, "um please send invoice 128。");
-    assert.equal(result.usage.length, cloudTranscriptionMode === "byok" ? 0 : 1);
-    if (cloudTranscriptionMode === "openwhispr") {
-      assert.equal(result.usage[0].text, result.published[0].text);
-      assert.equal(result.usage[0].sendLogs, false);
+    if (cloudTranscriptionMode === "byok") {
+      // An own-key stream reports no Cloud usage (#2558).
+      assert.deepEqual(result.usage, []);
+      continue;
     }
+    assert.equal(result.usage.length, 1);
+    assert.equal(result.usage[0].text, result.published[0].text);
+    assert.equal(result.usage[0].sendLogs, false);
   }
 });
 

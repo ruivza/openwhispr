@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { UserConfig } from '../types';
 import { StorageService } from '../services/storage/StorageService';
-import { localModeUpgradeConfig } from '../lib/inferenceModes';
+import { localModeUpgradeConfig, noteChatSplitConfig } from '../lib/inferenceModes';
 import { useProcessingModeStore } from './useProcessingModeStore';
 import { migrateHostedConfig } from '@/lib/fork';
 
@@ -20,6 +20,7 @@ const defaultConfig: UserConfig = {
   cloudBackupEnabled: false,
   appleLocalIntelligenceEnabled: true,
   localModeUpgraded: true,
+  noteChatSplit: true,
 };
 
 export const useConfigStore = create<ConfigState>((set, get) => ({
@@ -33,11 +34,15 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
       const config = await StorageService.getConfig();
       // const resolvedConfig = config || defaultConfig;
       // A config from before Local Mode's Cloud defaults is upgraded before anything reads it, so
-      // its uploads and cleanup never reach Cloud. A failed save upgrades it again next launch.
+      // its uploads and cleanup never reach Cloud, and one from before note chat had a selection of
+      // its own keeps the one it shared. A failed save upgrades it again next launch.
       const localConfig = migrateHostedConfig(config || defaultConfig);
-      const resolvedConfig = localConfig.localModeUpgraded
+      const localModeConfig = localConfig.localModeUpgraded
         ? localConfig
         : { ...localConfig, ...localModeUpgradeConfig(localConfig) };
+      const resolvedConfig = localModeConfig.noteChatSplit
+        ? localModeConfig
+        : { ...localModeConfig, ...noteChatSplitConfig(localModeConfig) };
       if (config && JSON.stringify(config) !== JSON.stringify(resolvedConfig)) {
         // A failed migration write must not replace an existing BYOK setup with
         // defaults. Keep its safe in-memory routes and retry on the next launch.

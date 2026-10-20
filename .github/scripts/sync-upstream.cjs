@@ -63,6 +63,7 @@ async function verifyCandidate(root, { git, originalSha }) {
     "test/helpers/settingsStoreTelemetryDisabled.test.js",
     "test/helpers/updater.test.js",
     "test/helpers/forkProductHelpIpc.test.js",
+    "test/helpers/retryTranscriptionHandler.test.js",
     "test/scripts/verifyPackagedStartup.test.js",
   ];
   if (git(["diff", "--name-only", originalSha, "--", "openwhispr-mobile/"]).stdout.trim()) {
