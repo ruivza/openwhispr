@@ -87,6 +87,18 @@ test('AppsFlyer never starts or queues/sends events after ATT approval or app re
   assert.deepEqual(loaded.dependencies, []);
 });
 
+test('product milestones never start a queue or reach the official API', async () => {
+  const loaded = loadProductionModule('src/lib/productEvents.ts', {
+    '@/lib/uuid': { randomUUID: () => 'synthetic-id' },
+    '@/lib/fork': { HOSTED_SERVICES_ENABLED: false },
+  });
+  loaded.exports.initProductEvents();
+  await loaded.exports.prepareProductEventsOptIn();
+  loaded.exports.recordOnboardingCompleted({ mode: 'private', replay: false, flowVersion: 'v2' });
+  // Only the module's own imports load: no storage, auth store, fetch or API client.
+  assert.deepEqual([...loaded.dependencies].sort(), ['@/lib/fork', '@/lib/uuid']);
+});
+
 test('tracking compatibility methods never load or prompt the native ATT SDK', async () => {
   const loaded = loadProductionModule('src/lib/trackingTransparency.ts');
   assert.equal(await loaded.exports.getTrackingAuthorizationStatus(), 'notSupported');

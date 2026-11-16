@@ -161,6 +161,24 @@ module.exports = () => {
   const iosQueries = iosInfoPlist.LSApplicationQueriesSchemes ?? [];
   const googleCalendar = createGoogleCalendarConfig(environment);
 
+  const affiliateDomain = firstNonEmpty(process.env.EXPO_PUBLIC_AFFILIATE_DOMAIN);
+  const affiliatePublishableKey = firstNonEmpty(process.env.EXPO_PUBLIC_AFFILIATE_PUBLISHABLE_KEY);
+  const affiliate =
+    affiliateDomain && affiliatePublishableKey
+      ? { domain: affiliateDomain, publishableKey: affiliatePublishableKey }
+      : undefined;
+  if (
+    affiliate &&
+    (!affiliatePublishableKey.startsWith('dub_pk_') ||
+      affiliateDomain !==
+        (environment.isDevelopment
+          ? 'open-whispr-affiliate-sandbox.dub.link'
+          : 'try.openwhispr.com'))
+  )
+    throw new Error(
+      'Affiliate configuration must match the app environment and use a publishable key',
+    );
+
   return {
     ...expo,
     // Original official EAS URL/project metadata remains in app.base.json.
@@ -172,6 +190,13 @@ module.exports = () => {
       ...expo.ios,
       // Keep the upstream team in app.base.json; unsigned fork builds use no team.
       ...(unsignedIosBuild ? { appleTeamId: undefined } : {}),
+      // Expo writes any associatedDomains array, even an empty one, as a new entitlement.
+      ...(affiliate && {
+        associatedDomains: unique([
+          ...(expo.ios?.associatedDomains ?? []),
+          `applinks:${affiliate.domain}`,
+        ]),
+      }),
       bundleIdentifier: environment.iosBundleIdentifier,
       buildNumber: forkVersion.revision,
       entitlements: {
@@ -197,6 +222,7 @@ module.exports = () => {
     plugins: withBrandFonts(withoutTelemetryPlugins(expo.plugins)),
     extra: {
       ...expo.extra,
+      affiliate,
       openWhispr: {
         ...environment,
         forkVersion: displayVersion,

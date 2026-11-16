@@ -143,6 +143,12 @@ OPENWHISPR_IOS_BUNDLE_IDENTIFIER=com.yourname.openwhispr \
 
 Run it from the repository root after preparing the mobile npm dependencies, reviewed patches, and Bundler dependencies as in the workflow. It uses the existing open font fallback and retains the original configuration in source. It does not sign, submit, or publish an app.
 
+## Dependency Overrides
+
+`package.json` can't carry comments, so the reason for each entry under `overrides` is kept here. Remove an override once the package it patches no longer needs it.
+
+- `@expo/cli` → `zod` 4.6.7: `@expo/cli` 55 declares `zod ^3.25`, and no zod 3 release fixes GHSA-mrhx-c7xc-m3w5, which fails the Mobile CI audit. The CLI uses zod only to validate dev tools plugins, which works on zod 4. Drop this once `@expo/cli` depends on zod 4.
+
 ## Pull Request Checklist
 
 Before submitting:
@@ -163,7 +169,7 @@ Use the GitHub issue templates. For security issues, follow [SECURITY.md](./SECU
 
 ## Provider development
 
-Mobile owns its provider code: the catalog is `src/config/providerCatalog.json`, routing is `src/lib/mobileProviders.ts`, and endpoint rules are `src/lib/providerEndpoints.ts`. The catalog is a trimmed copy of the desktop registry's OpenAI and Groq entries; update it by hand when those models change.
+Mobile owns its provider code: the catalog is `src/config/providerCatalog.json`, routing is `src/lib/mobileProviders.ts`, and endpoint rules are `src/lib/providerEndpoints.ts`. The catalog is a trimmed copy of the desktop registry's OpenAI and Groq entries; update it by hand when those models change. Copy desktop's `"legacy": true` flags too: the model picker lists a legacy model only while it is the selection. When a provider shuts a model down, remove it and add it to `src/lib/retiredModels.ts`, which moves saved selections to its replacement.
 
 From `openwhispr-mobile`, run:
 

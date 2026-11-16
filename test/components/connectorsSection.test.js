@@ -297,8 +297,8 @@ test("local users without an official login or plan can connect all configured p
   for (const connector of ["gmail", "slack", "linear", "github"]) {
     assert.ok(buttonWithText(none, `connectors.${connector}.connect`));
   }
-  // Every connector is still listed, each marked beta: email, Gmail, Slack, Linear and GitHub.
-  assert.equal(count(none.textContent, /connectors\.beta/g), 5);
+  // The beta badge sits on the Connectors title, not on each row.
+  assert.doesNotMatch(none.textContent, /connectors\.beta/);
 });
 
 test("local users can disconnect an existing login without a plan upsell", async (t) => {

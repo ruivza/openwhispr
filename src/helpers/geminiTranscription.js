@@ -78,7 +78,7 @@ async function transcribeWithGemini(
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
     body: JSON.stringify(requestBody),
-    signal,
+    ...(signal ? { signal } : {}),
   });
 
   if (!response.ok) {

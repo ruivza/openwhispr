@@ -20,6 +20,7 @@ import { Sentry } from '@/lib/sentry';
 import { useUsageStore } from '@/store/useUsageStore';
 import { clearAllSessions as clearAgentSessions } from '@/services/agent/AgentComposerService';
 import { claimNoteShareTokens, clearNoteShareTokens } from '@/lib/notes/noteShareTokens';
+import { withChatHistory } from '@/lib/chat/withChatHistory';
 
 const GUEST_SESSION_KEY = 'openwhispr_guest_session';
 
@@ -201,8 +202,13 @@ export const useAuthStore = create<AuthStore>((set) => ({
 //   },
 //
   signOut: async () => {
+    // Chats go the way of the notes they quote: a guest keeps them, while a session left over
+    // from an official account (an older build) takes its chat history with it.
+    const { user } = useAuthStore.getState();
+    const realAccount = user !== null && !user.isAnonymous;
     await useAuthStore.getState().continueAsGuest();
     clearAgentSessions();
+    withChatHistory((chats) => (realAccount ? chats.clearChatHistory() : chats.stopChatTurn()));
   },
 
   deleteAccount: async () => {
@@ -224,6 +230,7 @@ export const useAuthStore = create<AuthStore>((set) => ({
       await SecureStore.deleteItemAsync(GUEST_SESSION_KEY);
       useUsageStore.getState().reset();
       clearAgentSessions();
+      withChatHistory((chats) => chats.clearChatHistory());
       set({ user: null, sessionCookie: null, isGuest: false, isLoading: false });
     } catch (error) {
       set({ isLoading: false, error: error instanceof Error ? error.message : 'Delete failed' });

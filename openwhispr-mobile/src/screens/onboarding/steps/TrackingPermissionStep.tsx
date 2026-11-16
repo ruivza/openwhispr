@@ -6,7 +6,11 @@ import { OnboardingShell } from '@/components/onboarding/OnboardingShell';
 import { describeOnboardingError } from '@/lib/onboardingErrors';
 
 // Keep the saved step identifier valid while skipping all ATT education and SDK calls.
-export function TrackingPermissionStep(): ReactElement {
+// A caller that owns its own route (the creator offer) passes onComplete; the step then returns
+// there without advancing onboarding. No tracking prompt is shown in this build either way.
+export function TrackingPermissionStep({
+  onComplete,
+}: { onComplete?: () => Promise<void> } = {}): ReactElement {
   const { goNext } = useOnboardingStep('tracking-permission');
   const [advanceError, setAdvanceError] = useState<string | null>(null);
   const finishingRef = useRef(false);
@@ -16,12 +20,12 @@ export function TrackingPermissionStep(): ReactElement {
     finishingRef.current = true;
     setAdvanceError(null);
     try {
-      await goNext();
+      await (onComplete ?? goNext)();
     } catch (error) {
       finishingRef.current = false;
       setAdvanceError(describeOnboardingError(error, 'Could not save progress.'));
     }
-  }, [goNext]);
+  }, [goNext, onComplete]);
 
   useEffect(() => {
     void continueToCompletion();
@@ -66,8 +70,11 @@ const BENEFITS: Benefit[] = [
   { icon: 'scope', mdIcon: 'Target', text: 'Make better marketing decisions' },
 ];
 
-export function TrackingPermissionStep(): ReactElement {
-  const { goNext } = useOnboardingStep('tracking-permission');
+export function TrackingPermissionStep({
+  onComplete,
+}: { onComplete?: () => Promise<void> } = {}): ReactElement {
+  const { goNext: advanceStep } = useOnboardingStep('tracking-permission');
+  const goNext = onComplete ?? advanceStep;
   const markRequestAttempted = useOnboardingStore(
     (state) => state.markTrackingAuthorizationRequestAttempted,
   );

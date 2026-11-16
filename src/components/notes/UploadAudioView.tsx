@@ -1,10 +1,11 @@
-import React, { useState, useRef, useEffect } from "react";
+import { useRegistryVersion } from "../../hooks/useRegistryVersion";
+import { useState, useRef, useEffect, useId } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  Upload,
   FileAudio,
   X,
   AlertCircle,
+  AlertTriangle,
   ArrowRight,
   FolderOpen,
   Plus,
@@ -19,6 +20,7 @@ import { CARD_SURFACE_CLASS } from "../ui/surfaces";
 import { GRADIENT_CIRCLE } from "../ui/gradientCircle";
 import { Toggle } from "../ui/toggle";
 import EmptyStateCard from "../ui/EmptyStateCard";
+import { DropZone } from "../ui/DropZone";
 import { cn } from "../lib/utils";
 import {
   Select,
@@ -36,6 +38,7 @@ import {
   findVideosFolder,
   DOWNLOAD_ERROR_KEYS,
   transcriptionErrorKey,
+  uploadRestrictionKey,
   MEETINGS_FOLDER_NAME,
 } from "./shared";
 import { useAuth } from "../../hooks/useAuth";
@@ -45,9 +48,11 @@ import { describeProviderError } from "../../utils/describeProviderError";
 import {
   getAllReasoningModels,
   getBatchTranscriptionModel,
+  getTranscriptionProvider,
   getParakeetModelInfo,
   getTranscriptionProviders,
   isSherpaLocalProvider,
+  enterpriseProviderName,
 } from "../../models/ModelRegistry";
 import {
   useSettingsStore,
@@ -73,9 +78,18 @@ import { MAX_SPEAKER_COUNT } from "../../constants/speakerDetection.json";
 import BatchQueueView from "./BatchQueueView";
 import { generateNoteTitle } from "../../utils/generateTitle";
 import { getBaseLanguageCode } from "../../utils/languageSupport";
-import { isTranscriptionContextAllowed } from "../../stores/policyRules";
+import {
+  isAudioFeatureAllowed,
+  isAudioFeatureDenied,
+  isTranscriptionContextAllowed,
+  transcriptionChoiceRefusal,
+} from "../../stores/policyRules";
 import { usePolicyStore } from "../../stores/policyStore";
-import { usePolicySnapshot, useTranscriptionContextAllowed } from "../../hooks/usePolicy";
+import {
+  usePolicySnapshot,
+  useTranscriptionChoiceRefusal,
+  useTranscriptionContextAllowed,
+} from "../../hooks/usePolicy";
 import { resolveTranscriptionRoute } from "../../helpers/transcriptionRoute";
 import { uploadFileSizeState } from "../../helpers/uploadFilePolicy";
 import { saveUploadNote, uploadTitleFallback } from "../../services/uploadNotes";
@@ -137,6 +151,7 @@ interface UploadAudioViewProps {
 }
 
 export default function UploadAudioView({ onNoteCreated, onOpenSettings }: UploadAudioViewProps) {
+  useRegistryVersion();
   const { t } = useTranslation();
   const [state, setState] = useState<UploadState>("idle");
   const [file, setFile] = useState<{
@@ -154,7 +169,6 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
   const [diarizationWarning, setDiarizationWarning] = useState(false);
   const [noteId, setNoteId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [isDragOver, setIsDragOver] = useState(false);
   const [progress, setProgress] = useState(0);
   const progressRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [chunkProgress, setChunkProgress] = useState<{
@@ -278,6 +292,7 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
     tinfoilApiKey,
     deepgramApiKey,
     assemblyaiApiKey,
+    openrouterApiKey,
     customTranscriptionApiKey,
   } = apiKeys;
   const policyState = usePolicySnapshot();
@@ -301,6 +316,11 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
     )
   );
   const uploadAllowedByPolicy = useTranscriptionContextAllowed("upload");
+  const uploadChoiceRefusal = useTranscriptionChoiceRefusal("upload");
+  // The org's upload switch, which the banner explains and the inputs follow.
+  const uploadFeatureAllowed = isAudioFeatureAllowed(policyState, "upload");
+  const uploadRestrictionId = useId();
+  const uploadRestrictionDescription = uploadFeatureAllowed ? undefined : uploadRestrictionId;
 
   const cortiClientId = useSettingsStore((s) => s.cortiClientId);
   const cortiClientSecret = useSettingsStore((s) => s.cortiClientSecret);
@@ -318,14 +338,20 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
   const enterpriseTranscriptionSetupMode = useSettingsStore(
     (s) => s.enterpriseTranscriptionSetupMode
   );
-  const managedActive =
-    useManagedScopeResolution("transcription", enterpriseTranscriptionSetupMode).kind === "managed";
+  const managed = useManagedScopeResolution("transcription", enterpriseTranscriptionSetupMode);
+  const managedActive = managed.kind === "managed";
 
   const isOpenWhisprCloud =
-    isSignedIn && cloudTranscriptionMode === "openwhispr" && !useLocalWhisper;
+    !managedActive && isSignedIn && cloudTranscriptionMode === "openwhispr" && !useLocalWhisper;
 
   // Mode detection
   const isSelfHosted = transcriptionMode === "self-hosted" && !useLocalWhisper;
+  const isByok = !useLocalWhisper && !isOpenWhisprCloud;
+  // Managed audio never reaches the saved personal provider, so its diarize notes don't apply.
+  const byokDiarizeProvider =
+    isByok && !managedActive && !isSelfHosted ? cloudTranscriptionProvider : null;
+  // Provider caps apply per request: main splits a larger import (OpenRouter
+  // always in 4-minute pieces), so only OpenWhispr Cloud plan limits block a file.
   const sizePolicy = {
     local: useLocalWhisper,
     cloud: isOpenWhisprCloud,
@@ -333,7 +359,7 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
     managed: managedActive,
     provider: cloudTranscriptionProvider,
   };
-  const { fileTooLarge, requiresUpgrade, managedTooLarge, isLargeFile } = uploadFileSizeState(
+  const { fileTooLarge, requiresUpgrade, isLargeFile } = uploadFileSizeState(
     file?.sizeBytes ?? 0,
     sizePolicy
   );
@@ -341,6 +367,7 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
   useEffect(() => {
     return () => {
       if (progressRef.current) clearInterval(progressRef.current);
+      progressCleanupRef.current?.();
     };
   }, []);
 
@@ -418,25 +445,31 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
                 tinfoilApiKey,
                 deepgramApiKey,
                 assemblyaiApiKey,
+                openrouterApiKey,
                 customTranscriptionApiKey,
               })
             );
         }
         return;
       }
-      if (isSherpaLocalProvider(localTranscriptionProvider)) {
-        const r = await window.electronAPI.listParakeetModels?.();
-        if (!cancelled)
-          setProviderReady(
-            !!(r?.success && r.models.some((m: { downloaded?: boolean }) => m.downloaded))
-          );
-      } else {
-        const r = await window.electronAPI.listWhisperModels?.();
-        if (!cancelled)
-          setProviderReady(
-            !!(r?.success && r.models.some((m: { downloaded?: boolean }) => m.downloaded))
-          );
+      const sherpa = isSherpaLocalProvider(localTranscriptionProvider);
+      const r = sherpa
+        ? await window.electronAPI.listParakeetModels?.()
+        : await window.electronAPI.listWhisperModels?.();
+      let ready = !!(r?.success && r.models.some((m: { downloaded?: boolean }) => m.downloaded));
+      // The lists hold offered models only; a retired model still on disk keeps running.
+      const selected = sherpa
+        ? localTranscriptionProvider === "cohere"
+          ? cohereModel
+          : parakeetModel
+        : whisperModel;
+      if (!ready && selected) {
+        const status = sherpa
+          ? await window.electronAPI.checkParakeetModelStatus?.(selected)
+          : await window.electronAPI.checkModelStatus?.(selected);
+        ready = !!status?.downloaded;
       }
+      if (!cancelled) setProviderReady(ready);
     };
     checkProviderReady();
     return () => {
@@ -449,6 +482,9 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
     remoteTranscriptionUrl,
     useLocalWhisper,
     localTranscriptionProvider,
+    whisperModel,
+    parakeetModel,
+    cohereModel,
     cloudTranscriptionProvider,
     cloudTranscriptionBaseUrl,
     openaiApiKey,
@@ -459,14 +495,18 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
     tinfoilApiKey,
     deepgramApiKey,
     assemblyaiApiKey,
+    openrouterApiKey,
     customTranscriptionApiKey,
     cortiClientId,
     cortiClientSecret,
   ]);
 
   const getActiveModelLabel = (): string => {
+    if (managed.kind === "managed")
+      return `${enterpriseProviderName(managed.provider)} · ${managed.model}`;
     if (isOpenWhisprCloud) return t("notes.upload.openwhisprCloud");
     if (useLocalWhisper) {
+      if (uploadChoiceRefusal) return t("models.policy.chooseModel");
       if (localTranscriptionProvider === "nvidia")
         return getParakeetModelInfo(parakeetModel)?.name ?? parakeetModel;
       if (localTranscriptionProvider === "cohere") return `Cohere · ${cohereModel || "default"}`;
@@ -480,7 +520,13 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
       cloudTranscriptionProvider === "custom"
         ? t("notes.upload.custom")
         : cloudTranscriptionProvider.charAt(0).toUpperCase() + cloudTranscriptionProvider.slice(1);
-    const model = getBatchTranscriptionModel(cloudTranscriptionProvider) ?? cloudTranscriptionModel;
+    // Same rule as the upload itself: the batch model replaces only a streaming selection.
+    const batchModel = getBatchTranscriptionModel(cloudTranscriptionProvider);
+    const selectedId = cloudTranscriptionModel?.trim();
+    const selected = getTranscriptionProvider(cloudTranscriptionProvider)?.models.find(
+      (option) => option.id === selectedId
+    );
+    const model = batchModel && (!selected || selected.streaming) ? batchModel : selectedId;
     return `${name} · ${model}`;
   };
 
@@ -517,6 +563,7 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
   };
 
   const handleBrowse = async () => {
+    if (!isAudioFeatureAllowed(usePolicyStore.getState(), "upload")) return;
     const res = await window.electronAPI.selectAudioFile({ multiple: true });
     if (res.canceled) return;
 
@@ -543,16 +590,11 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
     batch.addFiles(items);
   };
 
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragOver(false);
-    const files = e.dataTransfer.files;
-    if (!files || files.length === 0) return;
-
+  const handleDroppedFiles = (files: File[]) => {
+    if (!isAudioFeatureAllowed(usePolicyStore.getState(), "upload")) return;
     const validFiles: Array<{ name: string; path: string; sizeBytes: number }> = [];
     const skippedNames: string[] = [];
-    for (let i = 0; i < files.length; i++) {
-      const f = files[i];
+    for (const f of files) {
       if (!isSupportedUploadFile(f.name)) {
         skippedNames.push(f.name);
         continue;
@@ -618,13 +660,41 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
     runIdRef.current++;
     reset();
   };
+  useEffect(() => {
+    return usePolicyStore.subscribe((policy) => {
+      if (!isAudioFeatureDenied(policy, "upload")) return;
+      const active = activeRequestIdRef.current || singleDownloadIdRef.current;
+      runIdRef.current++;
+      if (active) {
+        if (progressRef.current) clearInterval(progressRef.current);
+        progressCleanupRef.current?.();
+        progressCleanupRef.current = null;
+        setState("error");
+        setError(t(uploadRestrictionKey(policy)));
+      }
+      if (activeRequestIdRef.current) {
+        window.electronAPI.cancelUploadTranscription?.(activeRequestIdRef.current);
+        activeRequestIdRef.current = null;
+      }
+      if (singleDownloadIdRef.current)
+        window.electronAPI.cancelUrlDownload(singleDownloadIdRef.current);
+    });
+  }, [t]);
+
   const handleTranscribe = async () => {
     if (!file || batch.isProcessing) return;
+    const policy = usePolicyStore.getState();
+    if (!isAudioFeatureAllowed(policy, "upload")) {
+      setError(t(uploadRestrictionKey(policy)));
+      return;
+    }
     if (
       !isManagedTranscriptionActive() &&
-      !isTranscriptionContextAllowed(usePolicyStore.getState(), getSettings(), "upload")
+      !isTranscriptionContextAllowed(policy, getSettings(), "upload")
     ) {
-      setError(t("common.managedByOrg"));
+      const refusal = transcriptionChoiceRefusal(policy, getSettings(), "upload");
+      setError(t(refusal?.messageKey ?? "common.managedByOrg"));
+      setState("error");
       return;
     }
     const currentFile = file;
@@ -639,19 +709,21 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
     setDiarizationWarning(false);
 
     // Subscribe for every upload: transcoding can change its size, so only
-    // main knows whether it ultimately needs chunks. Keep estimated progress
-    // until the first real chunk event arrives.
+    // main knows whether it ultimately needs pieces. A single piece reports
+    // nothing until it is done, so the estimated bar covers it until a
+    // multi-piece upload reports real progress.
     progressCleanupRef.current =
       window.electronAPI.onUploadTranscriptionProgress?.((data) => {
-        if (runId !== runIdRef.current || data.requestId !== requestId) return;
+        // Main tags every upload's events with its request id; an untagged event is still ours.
+        if (runId !== runIdRef.current) return;
+        if (data.requestId !== undefined && data.requestId !== requestId) return;
+        if (data.chunksTotal <= 1) return;
         if (progressRef.current) clearInterval(progressRef.current);
-        if (data.chunksTotal > 0) {
-          setChunkProgress({
-            chunksTotal: data.chunksTotal,
-            chunksCompleted: data.chunksCompleted,
-          });
-          setProgress((data.chunksCompleted / data.chunksTotal) * 90);
-        }
+        setChunkProgress({
+          chunksTotal: data.chunksTotal,
+          chunksCompleted: data.chunksCompleted,
+        });
+        setProgress((prev) => Math.max(prev, (data.chunksCompleted / data.chunksTotal) * 90));
       }) ?? null;
     progressRef.current = setInterval(() => {
       setProgress((prev) => {
@@ -665,6 +737,8 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
 
     try {
       const diarization = await buildDiarizationSettings();
+      // A Cancel while speaker models download came before the main process had
+      // anything to abort; starting now would send, and bill, the whole upload.
       if (runId !== runIdRef.current) return;
       const res: FileTranscriptionResult = await transcribeFileWithSpeakers(
         currentFile.path,
@@ -672,9 +746,7 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
         diarization,
         currentFile.durationSeconds,
         { requestId, timestamps: true }
-      ).finally(() => {
-        if (activeRequestIdRef.current === requestId) activeRequestIdRef.current = null;
-      });
+      );
 
       if (runId !== runIdRef.current) return;
 
@@ -746,10 +818,13 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
         );
       }
       setState("error");
+    } finally {
+      if (activeRequestIdRef.current === requestId) activeRequestIdRef.current = null;
     }
   };
 
   const handleUrlSubmit = async () => {
+    if (!isAudioFeatureAllowed(usePolicyStore.getState(), "upload")) return;
     const trimmed = urlInput.trim();
     if (!trimmed) return;
 
@@ -850,6 +925,7 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
   };
 
   const handleBatchUrlSubmit = () => {
+    if (!isAudioFeatureAllowed(usePolicyStore.getState(), "upload")) return;
     const { valid, skipped } = parseBatchUrls(urlInput);
     if (valid.length > 0) {
       batch.addUrls(valid);
@@ -866,11 +942,17 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
 
   const startBatchProcessing = async () => {
     if (state === "downloading" || state === "transcribing") return;
+    const policy = usePolicyStore.getState();
+    if (!isAudioFeatureAllowed(policy, "upload")) {
+      setSkippedNotice(t(uploadRestrictionKey(policy)));
+      return;
+    }
     if (
       !isManagedTranscriptionActive() &&
-      !isTranscriptionContextAllowed(usePolicyStore.getState(), getSettings(), "upload")
+      !isTranscriptionContextAllowed(policy, getSettings(), "upload")
     ) {
-      setSkippedNotice(t("common.managedByOrg"));
+      const refusal = transcriptionChoiceRefusal(policy, getSettings(), "upload");
+      setSkippedNotice(t(refusal?.messageKey ?? "common.managedByOrg"));
       return;
     }
     setSkippedNotice(null);
@@ -913,6 +995,10 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
   };
 
   const getTranscribingLabel = (): string => {
+    if (managed.kind === "managed")
+      return t("notes.upload.transcribingProvider", {
+        provider: enterpriseProviderName(managed.provider),
+      });
     if (isOpenWhisprCloud) return t("notes.upload.transcribingCloud");
     if (useLocalWhisper) return t("notes.upload.transcribingLocal");
     if (isSelfHosted) {
@@ -929,6 +1015,19 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
         className={cn(PAGE_CONTENT_WIDTH_CLASS, "px-6 py-8 shrink-0 my-auto")}
         style={{ animation: "float-up 0.4s ease-out" }}
       >
+        {(!uploadFeatureAllowed || (!uploadAllowedByPolicy && uploadChoiceRefusal)) && (
+          <p
+            id={uploadRestrictionId}
+            role="status"
+            className="mb-5 flex items-center justify-center gap-2 rounded-lg border border-warning/20 bg-warning/8 px-4 py-3 text-sm text-amber-700 dark:bg-warning/10 dark:text-warning/90"
+          >
+            <AlertTriangle
+              aria-hidden="true"
+              className="w-3.5 h-3.5 shrink-0 text-amber-600 dark:text-warning"
+            />
+            {t(uploadChoiceRefusal?.messageKey ?? uploadRestrictionKey(policyState))}
+          </p>
+        )}
         {state === "idle" && providerReady === false && (
           <NoProviderView t={t} onOpenSettings={() => onOpenSettings?.("uploadTranscription")} />
         )}
@@ -938,11 +1037,11 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
             <IdleView
               t={t}
               getActiveModelLabel={getActiveModelLabel}
-              handleDrop={handleDrop}
+              handleDroppedFiles={handleDroppedFiles}
               handleBrowse={handleBrowse}
-              isDragOver={isDragOver}
-              setIsDragOver={setIsDragOver}
               onOpenSettings={onOpenSettings}
+              disabled={!uploadFeatureAllowed}
+              describedBy={uploadRestrictionDescription}
             />
 
             <div className="my-5 flex items-center gap-3">
@@ -953,7 +1052,7 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
               <div className="h-px flex-1 bg-border/70 dark:bg-white/10" />
             </div>
 
-            {urlExpanded ? (
+            {urlExpanded && uploadFeatureAllowed ? (
               <div>
                 <textarea
                   dir="ltr"
@@ -1030,16 +1129,18 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
                     }
                   }}
                   placeholder={t("notes.upload.urlPlaceholder")}
-                  className="h-11 w-full rounded-full! pl-11 pr-12 text-sm placeholder:text-foreground/45"
+                  disabled={!uploadFeatureAllowed}
+                  aria-describedby={uploadRestrictionDescription}
+                  className="h-11 w-full rounded-full! pl-11 pr-12 text-sm placeholder:text-foreground/45 disabled:cursor-not-allowed disabled:opacity-50"
                 />
                 <button
                   onClick={handleUrlSubmit}
-                  disabled={!urlInput.trim()}
+                  disabled={!uploadFeatureAllowed || !urlInput.trim()}
                   aria-label={t("notes.upload.urlSubmit")}
                   className={cn(
                     "absolute right-1.5 top-1/2 flex size-8 -translate-y-1/2 items-center justify-center rounded-full transition-[filter,transform] duration-100",
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
-                    urlInput.trim()
+                    uploadFeatureAllowed && urlInput.trim()
                       ? cn(GRADIENT_CIRCLE, "hover:brightness-110 active:scale-95")
                       : "bg-muted text-muted-foreground"
                   )}
@@ -1073,7 +1174,7 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
               }
             />
 
-            {!batch.isProcessing && batch.queue.some((i) => i.status === "queued") && (
+            {!batch.isProcessing && batch.hasPending && (
               <div className="mt-4 flex flex-col items-center gap-3">
                 {folders.length > 0 && (
                   <FolderSelect
@@ -1108,7 +1209,6 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
             requiresUpgrade={!!requiresUpgrade}
             fileTooLarge={fileTooLarge}
             isLargeFile={isLargeFile}
-            managedTooLarge={managedTooLarge}
             onUpgrade={() => usage?.openCheckout()}
             onOpenSettings={onOpenSettings}
           />
@@ -1180,7 +1280,17 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
         )}
 
         {state === "error" && error && (
-          <ErrorView t={t} error={error} reset={reset} onRetry={handleRetry} />
+          <ErrorView
+            t={t}
+            error={error}
+            reset={reset}
+            onRetry={handleRetry}
+            onOpenSettings={
+              onOpenSettings && !uploadAllowedByPolicy && uploadChoiceRefusal
+                ? () => onOpenSettings("uploadTranscription")
+                : undefined
+            }
+          />
         )}
 
         {(state === "idle" || state === "selected") && (
@@ -1201,33 +1311,21 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
                     {t("notes.upload.speakerDetectionDescription")}
                   </p>
 
-                  {diarizationEnabled &&
-                    !useLocalWhisper &&
-                    !isOpenWhisprCloud &&
-                    !isSelfHosted &&
-                    cloudTranscriptionProvider === "openai" && (
-                      <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-                        {t("notes.upload.openaiDiarizeNote")}
-                      </p>
-                    )}
-                  {diarizationEnabled &&
-                    !useLocalWhisper &&
-                    !isOpenWhisprCloud &&
-                    !isSelfHosted &&
-                    cloudTranscriptionProvider === "mistral" && (
-                      <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-                        {t("notes.upload.mistralDiarizeNote")}
-                      </p>
-                    )}
-                  {diarizationEnabled &&
-                    !useLocalWhisper &&
-                    !isOpenWhisprCloud &&
-                    !isSelfHosted &&
-                    cloudTranscriptionProvider === "groq" && (
-                      <p className="mt-1.5 text-xs leading-relaxed text-warning">
-                        {t("notes.upload.groqDiarizeNote")}
-                      </p>
-                    )}
+                  {diarizationEnabled && byokDiarizeProvider === "openai" && (
+                    <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+                      {t("notes.upload.openaiDiarizeNote")}
+                    </p>
+                  )}
+                  {diarizationEnabled && byokDiarizeProvider === "mistral" && (
+                    <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+                      {t("notes.upload.mistralDiarizeNote")}
+                    </p>
+                  )}
+                  {diarizationEnabled && byokDiarizeProvider === "groq" && (
+                    <p className="mt-1.5 text-xs leading-relaxed text-warning">
+                      {t("notes.upload.groqDiarizeNote")}
+                    </p>
+                  )}
 
                   {diarizationDownloading && (
                     <p className="mt-1.5 text-xs leading-relaxed text-primary">
@@ -1235,7 +1333,7 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
                     </p>
                   )}
 
-                  {diarizationEnabled && isOpenWhisprCloud && (
+                  {diarizationEnabled && (isOpenWhisprCloud || managedActive) && (
                     <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
                       {t("notes.upload.diarizationRunsLocally")}
                     </p>
@@ -1401,29 +1499,22 @@ function NoProviderView({ t, onOpenSettings }: NoProviderViewProps) {
 interface IdleViewProps {
   t: (key: string, options?: Record<string, unknown>) => string;
   getActiveModelLabel: () => string;
-  handleDrop: (e: React.DragEvent) => void;
+  handleDroppedFiles: (files: File[]) => void;
   handleBrowse: () => void;
-  isDragOver: boolean;
-  setIsDragOver: (v: boolean) => void;
   onOpenSettings?: (section: string) => void;
+  disabled: boolean;
+  describedBy?: string;
 }
 
 function IdleView({
   t,
   getActiveModelLabel,
-  handleDrop,
+  handleDroppedFiles,
   handleBrowse,
-  isDragOver,
-  setIsDragOver,
   onOpenSettings,
+  disabled,
+  describedBy,
 }: IdleViewProps) {
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      handleBrowse();
-    }
-  };
-
   return (
     <>
       <div className="flex flex-col items-center gap-2 text-center">
@@ -1438,55 +1529,15 @@ function IdleView({
         />
       </div>
 
-      <div
-        role="button"
-        tabIndex={0}
-        aria-label={t("notes.upload.dropOrBrowse")}
-        onDrop={handleDrop}
-        onDragOver={(e) => {
-          e.preventDefault();
-          setIsDragOver(true);
-        }}
-        onDragLeave={(e) => {
-          e.preventDefault();
-          setIsDragOver(false);
-        }}
-        onClick={handleBrowse}
-        onKeyDown={handleKeyDown}
-        className={cn(
-          "group mt-6 flex cursor-pointer flex-col items-center rounded-2xl border border-dashed px-6 py-12 text-center",
-          "transition-[background-color,border-color,transform] duration-200",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
-          isDragOver
-            ? "scale-[1.01] border-primary/60 bg-primary/5 dark:bg-primary/10"
-            : "border-border bg-card/50 hover:border-primary/40 hover:bg-primary/5 dark:border-white/15 dark:bg-surface-2/60 dark:hover:bg-primary/10"
-        )}
-        style={isDragOver ? { animation: "drag-pulse 1.5s ease-in-out infinite" } : undefined}
-      >
-        <span
-          className={cn(
-            "flex h-11 w-11 items-center justify-center rounded-xl transition-colors",
-            isDragOver
-              ? "bg-primary/15 text-primary"
-              : "bg-surface-3 text-foreground/70 group-hover:text-primary"
-          )}
-        >
-          <Upload size={20} />
-        </span>
-        <p
-          className={cn(
-            "mt-4 text-[15px] font-medium",
-            isDragOver ? "text-primary" : "text-foreground"
-          )}
-        >
-          {isDragOver ? t("notes.upload.dropToUpload") : t("notes.upload.dropOrBrowse")}
-        </p>
-        {!isDragOver && (
-          <p className="mt-1 max-w-md text-[13px] leading-relaxed text-foreground/60">
-            {t("notes.upload.supportedFormats")}
-          </p>
-        )}
-      </div>
+      <DropZone
+        label={t("notes.upload.dropOrBrowse")}
+        activeLabel={t("notes.upload.dropToUpload")}
+        hint={t("notes.upload.supportedFormats")}
+        onFiles={handleDroppedFiles}
+        onBrowse={handleBrowse}
+        disabled={disabled}
+        describedBy={describedBy}
+      />
     </>
   );
 }
@@ -1501,7 +1552,6 @@ interface SelectedViewProps {
   requiresUpgrade: boolean;
   fileTooLarge: boolean;
   isLargeFile: boolean;
-  managedTooLarge: boolean;
   onUpgrade: () => void;
   onOpenSettings?: (section: string) => void;
 }
@@ -1516,11 +1566,10 @@ function SelectedView({
   requiresUpgrade,
   fileTooLarge,
   isLargeFile,
-  managedTooLarge,
   onUpgrade,
   onOpenSettings,
 }: SelectedViewProps) {
-  const canTranscribe = !fileTooLarge && !requiresUpgrade && !managedTooLarge;
+  const canTranscribe = !fileTooLarge && !requiresUpgrade;
 
   return (
     <div className="flex flex-col gap-3" style={{ animation: "float-up 0.3s ease-out" }}>
@@ -1563,12 +1612,6 @@ function SelectedView({
             {t("notes.upload.fileTooLarge")}
           </p>
         </div>
-      )}
-
-      {managedTooLarge && (
-        <p className="text-[13px] text-destructive">
-          {t("notes.upload.byokTooLarge", { size: 25 })}
-        </p>
       )}
 
       {/* Cloud free user, file > 25 MB → needs paid plan */}
@@ -1846,9 +1889,10 @@ interface ErrorViewProps {
   error: string;
   reset: () => void;
   onRetry: () => void;
+  onOpenSettings?: () => void;
 }
 
-function ErrorView({ t, error, reset, onRetry }: ErrorViewProps) {
+function ErrorView({ t, error, reset, onRetry, onOpenSettings }: ErrorViewProps) {
   return (
     <div className="flex flex-col gap-4" style={{ animation: "float-up 0.3s ease-out" }}>
       <div className="flex items-start gap-3 rounded-2xl border border-destructive/20 bg-destructive/5 p-4 dark:bg-destructive/10">
@@ -1864,9 +1908,15 @@ function ErrorView({ t, error, reset, onRetry }: ErrorViewProps) {
       </div>
 
       <div className="flex items-center justify-center gap-2">
-        <Button onClick={onRetry} className={PRIMARY_ACTION_CLASS}>
-          {t("notes.upload.retry")}
-        </Button>
+        {onOpenSettings ? (
+          <Button onClick={onOpenSettings} className={PRIMARY_ACTION_CLASS}>
+            {t("notes.upload.noProviderAction")}
+          </Button>
+        ) : (
+          <Button onClick={onRetry} className={PRIMARY_ACTION_CLASS}>
+            {t("notes.upload.retry")}
+          </Button>
+        )}
         <Button variant="ghost" onClick={reset} className={SECONDARY_ACTION_CLASS}>
           {t("notes.upload.startOver")}
         </Button>

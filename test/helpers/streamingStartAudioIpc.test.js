@@ -91,8 +91,8 @@ Module._load = function loadWithLoopback(request, parent, isMain) {
     if (request === "./cortiStreaming") return LoopbackCorti;
     if (request === "./geminiLiveStreaming")
       return {
+        ...originalLoad.call(this, request, parent, isMain),
         GeminiLiveStreaming: LoopbackGemini,
-        GEMINI_LIVE_MODEL: "gemini-3.5-transcribe-live",
       };
   }
   return originalLoad.call(this, request, parent, isMain);

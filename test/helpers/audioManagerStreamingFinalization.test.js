@@ -25,6 +25,7 @@ function createFinalizingManager(AudioManager) {
   let providerStopCalls = 0;
   const manager = Object.assign(Object.create(AudioManager.prototype), {
     isRecording: true,
+    preparedMicCapture: { active: false },
     isProcessing: false,
     isStreaming: true,
     streamingStartInProgress: false,
@@ -565,7 +566,6 @@ test("cancel overrides a normal streaming stop before it can publish text", asyn
   manager.streamingFinalText = "do not paste";
   manager.screenContextPromise = Promise.resolve({ data: "stale-screen" });
   manager.selectionCapturePromise = Promise.resolve({ text: "stale-selection" });
-  manager.assistantSelectionContext = { text: "stale-assistant-selection" };
   manager.onTranscriptionComplete = (result) => completions.push(result);
 
   const stop = manager.stopStreamingRecording();
@@ -576,7 +576,6 @@ test("cancel overrides a normal streaming stop before it can publish text", asyn
   assert.deepEqual(completions, []);
   assert.equal(manager.screenContextPromise, null);
   assert.equal(manager.selectionCapturePromise, null);
-  assert.equal(manager.assistantSelectionContext, null);
   assert.equal(manager._streamingStopPromise, null);
   assert.equal(manager._streamingStopMode, null);
 });

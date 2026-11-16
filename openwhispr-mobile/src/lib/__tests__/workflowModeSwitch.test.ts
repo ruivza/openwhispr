@@ -34,7 +34,6 @@ jest.mock('@/lib/localReasoning', () => ({
 }));
 
 import {
-  leavingLocalModeWithLocalReasoning,
   pickLocalModel,
   switchWorkflowMode,
 } from '../workflowModeSwitch';
@@ -126,6 +125,17 @@ it.each(['appleIntelligenceOff', 'modelNotReady'])(
     expect(mockUpdateConfig).not.toHaveBeenCalled();
   },
 );
+
+// Changing the iPhone's language restarts the app, so the page sends the user back instead.
+it('asks to come back once the language is changed rather than waiting', async () => {
+  mockLocalReasoningReadiness.mockResolvedValue({ status: 'unsupportedLanguage' });
+  await expect(switchWorkflowMode('cleanup', 'local')).resolves.toBe('refused');
+  expect(alert).toHaveBeenCalledWith(
+    'On-Device Unavailable',
+    'Apple Intelligence is turned off. Then come back and choose On-Device again.',
+  );
+  expect(mockUpdateConfig).not.toHaveBeenCalled();
+});
 
 // Nothing in iOS Settings makes these ready, so the page must not wait for them.
 it.each(['unsupportedDevice', 'disabled', 'unavailable'])(
@@ -228,18 +238,6 @@ describe('switching dictation', () => {
     expect(mockUpdateConfig).not.toHaveBeenCalled();
   });
 
-  it('asks afresh about local reasoning only when leaving Local Mode for BYOK', async () => {
-    await expect(
-      leavingLocalModeWithLocalReasoning('dictation', 'private', 'providers'),
-    ).resolves.toBe(true);
-    expect(mockLocalReasoningReadiness).toHaveBeenCalledWith({ refresh: true });
-    mockLocalReasoningReadiness.mockClear();
-    await expect(leavingLocalModeWithLocalReasoning('dictation', 'private', 'local')).resolves.toBe(
-      false,
-    );
-    expect(mockLocalReasoningReadiness).not.toHaveBeenCalled();
-  });
-
   it('builds saved config after waiting for the current local model readiness', async () => {
     mockActiveMode = 'providers';
     const provider = {
@@ -286,5 +284,84 @@ describe('switching dictation', () => {
       await expect(switchWorkflowMode('dictation', mode)).resolves.toBe('switched');
       expect(mockUpdateConfig.mock.calls[0][0].inference.cleanup).toEqual(cleanup);
     }
+  });
+});
+
+// On-Device dictation moves only dictation, so turning it on offers to move note formatting too.
+describe('offering On-Device note formatting', () => {
+  const OFFER = 'Format notes on this iPhone too?';
+  const flush = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+
+  function offer(): { onPress?: () => void }[] | undefined {
+    return alert.mock.calls.find(([title]) => title === OFFER)?.[2];
+  }
+
+  // Official build: offered to move note formatting off OpenWhispr Cloud. With nothing saved,
+  // this build already formats notes on this iPhone, so there is nothing to offer.
+  it('does not offer it when unset note formatting already runs on this iPhone', async () => {
+    await switchWorkflowMode('dictation', 'local');
+    await flush();
+    expect(offer()).toBeUndefined();
+  });
+
+  it('offers it when note formatting uses a provider and Apple Intelligence is ready', async () => {
+    mockConfig = {
+      ...mockConfig,
+      inference: {
+        ...(mockConfig?.inference as Record<string, unknown>),
+        notes: { mode: 'providers', providerId: 'groq', modelId: 'llama' },
+      },
+    };
+    await switchWorkflowMode('dictation', 'local');
+    await flush();
+    expect(alert).toHaveBeenCalledWith(
+      OFFER,
+      'Dictation now stays on this iPhone. Note formatting and titles still use Groq.',
+      expect.any(Array),
+    );
+
+    offer()?.[1].onPress?.();
+    await flush();
+    expect(mockUpdateConfig).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        inference: expect.objectContaining({ notes: { mode: 'local' } }),
+      }),
+    );
+  });
+
+  it('leaves note formatting alone on Not Now', async () => {
+    await switchWorkflowMode('dictation', 'local');
+    await flush();
+    offer()?.[0].onPress?.();
+    await flush();
+    expect(mockUpdateConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not offer it when Apple Intelligence is not ready', async () => {
+    mockLocalReasoningReadiness.mockResolvedValue({
+      status: 'modelNotReady',
+      tokenCounting: false,
+    });
+    await switchWorkflowMode('dictation', 'local');
+    await flush();
+    expect(offer()).toBeUndefined();
+  });
+
+  it('does not offer it when note formatting is already On-Device', async () => {
+    mockConfig = {
+      defaultMode: 'cloud',
+      inference: { dictation: { mode: 'openwhispr' }, notes: { mode: 'local' } },
+    };
+    await switchWorkflowMode('dictation', 'local');
+    await flush();
+    expect(offer()).toBeUndefined();
+  });
+
+  it('does not offer it for another workflow or when leaving Local Mode', async () => {
+    await switchWorkflowMode('upload', 'local');
+    mockActiveMode = 'private';
+    await switchWorkflowMode('dictation', 'openwhispr');
+    await flush();
+    expect(offer()).toBeUndefined();
   });
 });

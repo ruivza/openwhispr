@@ -148,6 +148,7 @@ test('legacy account/paywall/ATT progress resumes locally while permissions rema
       zustand: { create: createStore },
       '@/utils/onboarding': { FIRST_ONBOARDING_STEP: 'get-started', ONBOARDING_VERSION: 3, OnboardingService: { isOnboardingComplete: async () => false, hasAttemptedTrackingAuthorizationRequest: async () => false, getProgress: async () => progress } },
       '@/lib/appsflyer': { logTutorialCompletion() {} },
+      '@/lib/productEvents': { recordOnboardingCompleted() {} },
       './useConfigStore': { useConfigStore: { getState: () => ({ config: null }) } },
     });
     const { useOnboardingStore, getOnboardingRoute } = client.load('src/store/useOnboardingStore.ts');
@@ -191,14 +192,16 @@ test('local and direct BYOK transcription execute while stale official upload jo
   let uploads = 0;
   const localResponse = { text: 'local transcript' };
   const byokRoute = { mode: 'providers', scope: 'dictation', providerId: 'openai', modelId: 'whisper-1', credentialRef: 'existing-key' };
+  // The prompt caps are pure; only the endpoint-based limit is fixed for this synthetic route.
+  const promptCap = loader().load('src/lib/transcriptionPromptCap.ts');
   const client = loader({
     'expo-file-system/legacy': { uploadAsync: async () => { uploads++; } },
     './LocalWhisperService': { LocalWhisperService: {} },
     './LocalTranscriptionService': { LocalTranscriptionService: {} },
     '../../store/useAuthStore': { useAuthStore: { getState: () => ({ sessionCookie: 'stale-cookie' }) } },
     '../../lib/apiClient': { getClientVersionHeader: () => ({}) },
-    '../../lib/dictationHints': { buildDictationHints: () => [], isDictationContext: () => false },
-    '../../lib/transcriptionPromptCap': { trimDictionaryPrompt: (value) => value, dictionaryPromptLimit: () => 1000 },
+    '../../lib/transcriptionPromptCap': { ...promptCap, dictionaryPromptLimit: () => 1000 },
+    '../../lib/dictationHints': { buildDictationHints: () => [], buildDictationHintTiers: () => [], buildLlmDictionary: () => ({ personal: [], shared: [] }), isDictationContext: () => false },
     '../../../modules/background-uploader/src': { BackgroundUploader: { upload: async () => { uploads++; } } },
     '../../../modules/audio-tools/src': { AudioTools: {} },
     '../../../modules/app-group-storage/src': { AppGroupStorage: {}, APP_GROUP_KEYS: {} },

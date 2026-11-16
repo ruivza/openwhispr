@@ -99,7 +99,6 @@ function unsavedRunsIn(
   scope: OtherWorkflow,
   mode: ProcessingMode,
   cloudAccess: CloudAccess,
-  localReasoningReady: boolean,
 ): InferenceSelection | undefined {
   if (mode === 'providers' && (scope === 'cleanup' || scope === 'agent')) return undefined;
   if (mode === 'private' && scope === 'agent') return undefined;
@@ -140,14 +139,13 @@ function dictationSwitchConfig(
   mode: ProcessingMode,
   leavingMode: ProcessingMode,
   cloudAccess: CloudAccess,
-  localReasoningReady: boolean,
 ): DictationModeConfig {
   const inference = { ...config?.inference, dictation };
   if (mode === leavingMode) return { defaultMode: mode, inference };
   const pinnedInference = [...(config?.pinnedInference ?? [])];
   for (const scope of OTHER_WORKFLOWS) {
     if (inference[scope]) continue;
-    const selection = unsavedRunsIn(config, scope, leavingMode, cloudAccess, localReasoningReady);
+    const selection = unsavedRunsIn(config, scope, leavingMode, cloudAccess);
     if (!selection) continue;
     inference[scope] = selection;
     if (!pinnedInference.includes(scope)) pinnedInference.push(scope);
@@ -160,15 +158,13 @@ function dictationSwitchConfig(
 }
 
 // The config a workflow page writes when the user saves `selection` for `scope`. `cloudAccess` is
-// what the user has on OpenWhispr Cloud, and `localReasoningReady` whether Apple Intelligence can
-// run here; together they decide what an unsaved workflow ran in Local Mode.
+// what the user has on OpenWhispr Cloud, which decides what an unsaved workflow ran in Local Mode.
 export function workflowSaveConfig(
   config: UserConfig | null,
   scope: MobileInferenceScope,
   selection: InferenceSelection,
   activeMode: ProcessingMode,
   cloudAccess: CloudAccess = 'none',
-  localReasoningReady = false,
 ): Partial<UserConfig> {
   const { providerId } = selection;
   const otherProviders = Object.fromEntries(
@@ -194,14 +190,7 @@ export function workflowSaveConfig(
           : { mode: 'openwhispr' as const };
     return {
       ...rememberedInference,
-      ...dictationSwitchConfig(
-        config,
-        dictation,
-        mode,
-        activeMode,
-        cloudAccess,
-        localReasoningReady,
-      ),
+      ...dictationSwitchConfig(config, dictation, mode, activeMode, cloudAccess),
     };
   }
   return {
@@ -257,5 +246,21 @@ export function noteChatSplitConfig(config: UserConfig): Partial<UserConfig> {
     ...(copied && config.pinnedInference?.includes('agent')
       ? { pinnedInference: [...config.pinnedInference, 'noteChat'] }
       : {}),
+  };
+}
+
+// Local Mode once formatted notes on this iPhone whatever was saved for them. A config from then
+// that is in Local Mode, with nothing of the user's own saved for note formatting, holds it
+// On-Device, so the update sends no note to Cloud that wasn't sent before.
+export function notesLocalModeSplitConfig(config: UserConfig): Partial<UserConfig> {
+  const saved = config.inference?.notes;
+  const ownChoice = !!saved && !config.pinnedInference?.includes('notes');
+  if (config.defaultMode !== 'private' || ownChoice) return { notesLocalModeSplit: true };
+  return {
+    notesLocalModeSplit: true,
+    inference: { ...config.inference, notes: localSelection(config, 'notes') },
+    pinnedInference: saved
+      ? (config.pinnedInference ?? [])
+      : [...(config.pinnedInference ?? []), 'notes'],
   };
 }

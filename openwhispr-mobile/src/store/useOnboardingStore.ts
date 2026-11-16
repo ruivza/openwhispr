@@ -6,6 +6,7 @@ import {
   type OnboardingProgress,
 } from '@/utils/onboarding';
 import { logTutorialCompletion } from '@/lib/appsflyer';
+import { recordOnboardingCompleted } from '@/lib/productEvents';
 import { useConfigStore } from './useConfigStore';
 import type { ProcessingMode } from '@/types';
 import { HOSTED_SERVICES_ENABLED } from '@/lib/fork';
@@ -308,6 +309,13 @@ export const useOnboardingStore = create<OnboardingStore>((set, get) => {
         try {
           await OnboardingService.completeOnboarding();
           set({ finished: true });
+          // The onboarding milestone: only this persisted completion records it,
+          // never the tutorial step, a resumed session or hydration.
+          recordOnboardingCompleted({
+            mode: get().selectedMode,
+            replay: get().replaying,
+            flowVersion: `mobile-onboarding-${ONBOARDING_VERSION}`,
+          });
         } finally {
           finishInFlight = null;
         }

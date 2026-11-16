@@ -10,7 +10,7 @@ const originalLoad = Module._load;
 const forkFixture = { ...require("../../src/config/fork.json"), officialAccountEnabled: true };
 
 // Registers the real handler closures against a fake `this` (the scaffolding
-// from agentDictationPillIpc.test.js) with the bearer state under test control
+// from windowIpcSenders.test.js) with the bearer state under test control
 // and the binding file in a temporary userData directory, so the scope
 // handlers run against the real accountScopeBinding.
 const handlers = new Map();
@@ -65,6 +65,16 @@ Module._load = function loadWithMocks(request, parent, isMain) {
   if (parent?.filename === handlersModulePath) {
     // Retain the official scope protocol tests under an explicit legacy fixture.
     if (request === "../config/fork.json") return forkFixture;
+    // Keep every cleanup target inside this harness's temporary userData.
+    if (request === "os") return { ...os, homedir: () => userDataDirectory };
+    if (request === "./autoStart") return { setAutoStartEnabled() {} };
+    if (request === "./modelDirUtils") {
+      return { getModelsDirForService: () => path.join(userDataDirectory, "models") };
+    }
+    if (request === "./modelManagerBridge") {
+      return { default: { deleteAllModels: async () => {} } };
+    }
+    if (request === "./onnxWorkerClient") return { stop: async () => {} };
     if (request === "./tokenStore") {
       return {
         get: () => tokenState.token,
@@ -113,7 +123,14 @@ const databaseManager = new Proxy(
 );
 
 function buildFakeThis() {
-  const target = { sessionId: "test-session", connectorManager, databaseManager };
+  const target = {
+    sessionId: "test-session",
+    connectorManager,
+    databaseManager,
+    _meetingMicStreaming: null,
+    _meetingSystemStreaming: null,
+    _activeEnterpriseAudioMeeting: false,
+  };
   return new Proxy(target, {
     get: (value, property) => (property in value ? value[property] : anything()),
   });
@@ -133,6 +150,7 @@ test.before(() => {
 
 test.after(() => {
   fakeThis.metaActivation?.dispose?.();
+  fakeThis.productEvents?.dispose?.();
   Module._load = originalLoad;
   fs.rmSync(userDataDirectory, { recursive: true, force: true });
 });
@@ -254,6 +272,21 @@ test("meeting prompt retirement precedes scope mutation and skips a true no-op",
   fakeThis.windowManager = originalManager;
 });
 
+test("a sign-out or account switch stops the meeting as an account change, not a policy refusal", async (t) => {
+  const originalStop = fakeThis._stopMeetingForPolicy;
+  const reasons = [];
+  fakeThis._stopMeetingForPolicy = (reason) => reasons.push(reason);
+  t.after(() => {
+    fakeThis._stopMeetingForPolicy = originalStop;
+  });
+  tokenState = { token: "switch-token", generation: 40 };
+  databaseManager.activeAccountId = "first-account";
+  await setScope("second-account", 40);
+  handleAuthTokenChange({ token: "rotated", generation: 41 });
+  handleAuthTokenChange({ token: null, generation: 42 });
+  assert.deepEqual(reasons, ["accountChanged", "accountChanged"]);
+});
+
 test("activation storage failure cannot prevent clearing the local bearer", async () => {
   const manager = fakeThis.metaActivation;
   fakeThis.metaActivation = {
@@ -270,4 +303,437 @@ test("activation storage failure cannot prevent clearing the local bearer", asyn
   } finally {
     fakeThis.metaActivation = manager;
   }
+});
+
+test("signed-out transitions restore guest meeting detection without granting a replacement bearer guest permissions", async (t) => {
+  const { createAudioFeaturePolicy } = require("../../src/helpers/audioFeaturePolicy");
+  const originalManager = fakeThis.windowManager;
+  const originalEngine = fakeThis.meetingDetectionEngine;
+  const originalPolicy = fakeThis._audioFeaturePolicy;
+  const originalAccount = databaseManager.activeAccountId;
+  const originalTokenState = tokenState;
+  t.after(() => {
+    fakeThis.windowManager = originalManager;
+    fakeThis.meetingDetectionEngine = originalEngine;
+    fakeThis._audioFeaturePolicy = originalPolicy;
+    databaseManager.activeAccountId = originalAccount;
+    tokenState = originalTokenState;
+  });
+  const applied = [];
+  fakeThis.windowManager = { notificationPrefs: {}, retireMeetingNotificationScope() {} };
+  fakeThis.meetingDetectionEngine = { setPreferences: (prefs) => applied.push(prefs) };
+  fakeThis._audioFeaturePolicy = createAudioFeaturePolicy({
+    getPolicy: async () => ({ success: false }),
+    onChange: () => fakeThis._syncMeetingDetectorPolicy(),
+  });
+  fakeThis._audioFeaturePolicy.update({
+    success: true,
+    managed: true,
+    policy: { features: { meetingRecordingEnabled: false } },
+  });
+  await handlers.get("sync-notification-preferences")(
+    {},
+    {
+      notificationsEnabled: true,
+      notifyMeetingDetection: true,
+      meetingProcessDetection: true,
+    }
+  );
+  assert.deepEqual(applied.at(-1), { audioDetection: false, processDetection: false });
+
+  tokenState = { token: null, generation: 40 };
+  handleAuthTokenChange(tokenState);
+  assert.equal(fakeThis._audioFeaturePolicy.failure("meeting"), null);
+  assert.deepEqual(applied.at(-1), { audioDetection: true, processDetection: true });
+
+  tokenState = { token: "replacement-bearer", generation: 41 };
+  handleAuthTokenChange(tokenState);
+  assert.equal(fakeThis._audioFeaturePolicy.failure("meeting").code, "POLICY_UNRESOLVABLE");
+  await setScope(null, 41);
+  assert.equal(fakeThis._audioFeaturePolicy.failure("meeting").code, "POLICY_UNRESOLVABLE");
+
+  tokenState = { token: null, generation: 42 };
+  databaseManager.activeAccountId = "departing-account";
+  await setScope(null, 42);
+  assert.equal(fakeThis._audioFeaturePolicy.failure("meeting"), null);
+  assert.deepEqual(applied.at(-1), { audioDetection: true, processDetection: true });
+});
+
+// Official title: "senderless audio policy uses the current bearer or a live app window's
+// cookies, while renderer auth stays scoped".
+test("senderless audio policy answers every credential source without contacting the disabled hosted API", async (t) => {
+  const originalManager = fakeThis.windowManager;
+  const originalAccount = databaseManager.activeAccountId;
+  const originalTokenState = tokenState;
+  const originalApiUrl = process.env.OPENWHISPR_API_URL;
+  t.after(() => {
+    fakeThis.windowManager = originalManager;
+    databaseManager.activeAccountId = originalAccount;
+    tokenState = originalTokenState;
+    if (originalApiUrl === undefined) delete process.env.OPENWHISPR_API_URL;
+    else process.env.OPENWHISPR_API_URL = originalApiUrl;
+  });
+  process.env.OPENWHISPR_API_URL = "https://api.openwhispr.test";
+  const requests = [];
+  t.mock.method(electronStub.net, "fetch", async (_url, init) => {
+    requests.push(init.headers);
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ data: { managed: false, policy: null, policyUpdatedAt: null } }),
+    };
+  });
+  const windowWithCookie = (value, destroyed = false) => ({
+    isDestroyed: () => destroyed,
+    webContents: {
+      session: {
+        cookies: { get: async () => (value ? [{ name: "openwhispr.session_token", value }] : []) },
+      },
+    },
+  });
+  const renderer = windowWithCookie("renderer-session");
+  t.mock.method(electronStub.BrowserWindow, "fromWebContents", () => renderer);
+  for (const [token, controlPanel, main, event, expected] of [
+    ["cli-bearer", null, null, {}, { Authorization: "Bearer cli-bearer" }],
+    [
+      null,
+      windowWithCookie("control-session"),
+      null,
+      {},
+      { Cookie: "openwhispr.session_token=control-session" },
+    ],
+    [
+      null,
+      windowWithCookie("stale", true),
+      windowWithCookie("main-session"),
+      {},
+      { Cookie: "openwhispr.session_token=main-session" },
+    ],
+    [
+      null,
+      windowWithCookie("control-session"),
+      null,
+      { sender: {} },
+      { Cookie: "openwhispr.session_token=renderer-session" },
+    ],
+    [null, windowWithCookie(""), null, {}, null],
+  ]) {
+    tokenState = { token, generation: tokenState.generation + 1 };
+    databaseManager.activeAccountId = expected ? "cli-account" : null;
+    fakeThis.windowManager = { controlPanelWindow: controlPanel, mainWindow: main };
+    const before = requests.length;
+    assert.deepEqual(
+      await fakeThis._audioFeaturePolicy.run(event, "upload", () => ({ success: true })),
+      { success: true }
+    );
+    // With a verdict already held, the lookup runs behind the answer.
+    for (let turn = 0; expected && turn < 50 && requests.length === before; turn++) {
+      await new Promise(setImmediate);
+    }
+    // Official build: one lookup carrying the expected bearer or cookie. This build has no
+    // hosted API (resolveHostedApiUrl answers nothing), so the run is still answered and no
+    // credential is ever sent.
+    // assert.equal(requests.length - before, expected ? 1 : 0);
+    // if (expected) {
+    //   for (const [key, value] of Object.entries(expected)) {
+    //     assert.equal(requests.at(-1)[key], value);
+    //   }
+    // }
+    assert.equal(requests.length - before, 0);
+  }
+});
+
+test("a token rotation keeps the account's running jobs and meeting; another account ends them", async (t) => {
+  const { createAudioFeaturePolicy } = require("../../src/helpers/audioFeaturePolicy");
+  const { deferred } = require("./harness/deferred");
+  const originalPolicy = fakeThis._audioFeaturePolicy;
+  const originalStop = fakeThis._stopMeetingForPolicy;
+  const originalAccount = databaseManager.activeAccountId;
+  const originalTokenState = tokenState;
+  t.after(() => {
+    fakeThis._audioFeaturePolicy = originalPolicy;
+    fakeThis._stopMeetingForPolicy = originalStop;
+    databaseManager.activeAccountId = originalAccount;
+    tokenState = originalTokenState;
+  });
+  const allowed = { success: true, managed: true, policy: { features: {} } };
+  const stops = [];
+  fakeThis._stopMeetingForPolicy = (reason) => stops.push(reason);
+
+  for (const [nextAccount, accountChanged] of [
+    ["rotation-account", false],
+    ["other-account", true],
+  ]) {
+    stops.length = 0;
+    let lookup = deferred();
+    fakeThis._audioFeaturePolicy = createAudioFeaturePolicy({ getPolicy: () => lookup.promise });
+    tokenState = { token: "rotation-token-a", generation: 60 };
+    databaseManager.activeAccountId = "rotation-account";
+    await setScope("rotation-account", 60);
+    fakeThis._audioFeaturePolicy.update(allowed);
+
+    const entered = deferred();
+    const finish = deferred();
+    const upload = fakeThis._audioFeaturePolicy.run({}, "upload", async () => {
+      entered.resolve();
+      await finish.promise;
+      return { success: true };
+    });
+    await entered.promise;
+    lookup = deferred();
+
+    tokenState = { token: "rotation-token-b", generation: 61 };
+    handleAuthTokenChange(tokenState);
+    await setScope(nextAccount, 61);
+    // The same account's live meeting keeps transcribing until the new verdict
+    // arrives; nothing keeps the previous account's verdict.
+    assert.equal(
+      fakeThis._audioFeaturePolicy.activeFailure("meeting")?.code ?? null,
+      accountChanged ? "POLICY_UNRESOLVABLE" : null
+    );
+    assert.equal(fakeThis._audioFeaturePolicy.failure("meeting").code, "POLICY_UNRESOLVABLE");
+    finish.resolve();
+
+    assert.deepEqual(stops, accountChanged ? ["accountChanged"] : []);
+    assert.equal((await upload).success, !accountChanged);
+    lookup.resolve(allowed);
+    await new Promise(setImmediate);
+    assert.equal(fakeThis._audioFeaturePolicy.failure("meeting"), null);
+  }
+});
+
+// Runs an enterprise meeting under `workspace-a`, owned by main, and reports every stop.
+async function enterpriseMeeting(t, generation) {
+  const originalStop = fakeThis._stopMeetingForPolicy;
+  const originalManager = fakeThis.enterpriseIdentityManager;
+  const originalAccount = databaseManager.activeAccountId;
+  const originalTokenState = tokenState;
+  t.after(() => {
+    fakeThis._stopMeetingForPolicy = originalStop;
+    fakeThis.enterpriseIdentityManager = originalManager;
+    fakeThis._activeEnterpriseAudioMeeting = false;
+    databaseManager.activeAccountId = originalAccount;
+    tokenState = originalTokenState;
+  });
+  const stops = [];
+  fakeThis._stopMeetingForPolicy = (reason) => {
+    stops.push(reason);
+    fakeThis._activeEnterpriseAudioMeeting = false;
+  };
+  fakeThis.enterpriseIdentityManager = {
+    getConfig: async ({ accountId, workspaceId, expectedAuthGeneration }) => ({
+      success: true,
+      accountId,
+      workspaceId,
+      authGeneration: expectedAuthGeneration,
+      config: { generation: 1, providers: [] },
+    }),
+    clear: () => {},
+  };
+  const loadConfig = (accountId, workspaceId, authGeneration) =>
+    handlers.get("get-managed-enterprise-config")({}, accountId, workspaceId, authGeneration);
+  const clear = (options) => handlers.get("clear-managed-enterprise-identity")({}, options);
+  const next = (accountId, workspaceId) => ({ next: { accountId, workspaceId } });
+  const rotate = (generation) => {
+    tokenState = { token: `enterprise-token-${generation}`, generation };
+    handleAuthTokenChange(tokenState);
+  };
+
+  rotate(generation);
+  await setScope("enterprise-account", generation);
+  databaseManager.activeAccountId = "enterprise-account";
+  await loadConfig("enterprise-account", "workspace-a", generation);
+  fakeThis._activeEnterpriseAudioMeeting = true;
+  stops.length = 0;
+  return { stops, loadConfig, clear, next, rotate };
+}
+
+test("an enterprise meeting outlives a token rotation and any clear that names no scope", async (t) => {
+  const { stops, loadConfig, clear, next, rotate } = await enterpriseMeeting(t, 70);
+  rotate(71);
+  // A window booting mid-rotation reads no scope yet and clears without one.
+  await clear();
+  await clear(next("enterprise-account", "workspace-a"));
+  await setScope("enterprise-account", 71);
+  await loadConfig("enterprise-account", "workspace-a", 71);
+  assert.deepEqual(stops, [], "a same-account token rotation keeps the meeting");
+});
+
+test("an enterprise meeting stops as soon as the renderer moves to another workspace, even before the scope resolves", async (t) => {
+  const { stops, loadConfig, clear, next, rotate } = await enterpriseMeeting(t, 72);
+  rotate(73);
+  await clear(next("enterprise-account", "workspace-b"));
+  assert.deepEqual(stops, ["workspaceChanged"]);
+  // The config request that would otherwise have noticed is refused meanwhile.
+  await assert.rejects(loadConfig("enterprise-account", "workspace-b", 73), {
+    code: "AUTH_CONTEXT_CHANGED",
+  });
+});
+
+test("an enterprise meeting stops when the workspace is cleared with no config to follow", async (t) => {
+  const { stops, clear, next } = await enterpriseMeeting(t, 74);
+  await clear({ next: { accountId: "enterprise-account", workspaceId: 7 } });
+  assert.deepEqual(stops, [], "a malformed scope is ignored");
+  await clear(next("enterprise-account", null));
+  assert.deepEqual(stops, ["workspaceChanged"]);
+});
+
+test("an enterprise meeting stops for another account once main learns it, not on the renderer's clear", async (t) => {
+  const { stops, clear, rotate } = await enterpriseMeeting(t, 76);
+  rotate(77);
+  await clear();
+  assert.deepEqual(stops, []);
+  await setScope("other-account", 77);
+  // The account scope change stops any meeting as well; every stop names the account.
+  assert.ok(stops.length > 0 && stops.every((reason) => reason === "accountChanged"), stops);
+});
+
+test("account deletion still deletes the note mirrors when the enterprise vault won't clear", async (t) => {
+  const originalTokenState = tokenState;
+  const originals = {
+    enterpriseAudioCredentials: fakeThis.enterpriseAudioCredentials,
+    metaActivation: fakeThis.metaActivation,
+    _asyncMirrorDelete: fakeThis._asyncMirrorDelete,
+  };
+  t.after(() => {
+    Object.assign(fakeThis, originals);
+    delete connectorManager.disconnectAll;
+    delete databaseManager.deleteAccountData;
+    tokenState = originalTokenState;
+  });
+  const mirrored = [];
+  tokenState = { token: "delete-token", generation: 90 };
+  connectorManager.disconnectAll = async () => {};
+  databaseManager.deleteAccountData = () => ({ deletedNoteIds: [11, 12] });
+  fakeThis.metaActivation = { purge: () => {} };
+  fakeThis._asyncMirrorDelete = (noteId) => mirrored.push(noteId);
+  fakeThis.enterpriseAudioCredentials = {
+    removeAccount: async () => {
+      throw new Error("vault locked");
+    },
+  };
+
+  const result = await handlers.get("delete-account-data")({}, "deleted-account", 90);
+  assert.equal(result.success, true);
+  assert.deepEqual(mirrored, [11, 12]);
+});
+
+test("account deletion still clears audio and note mirrors when product-event erasure fails", async (t) => {
+  const originalTokenState = tokenState;
+  const originals = {
+    productEvents: fakeThis.productEvents,
+    audioStorageManager: fakeThis.audioStorageManager,
+    metaActivation: fakeThis.metaActivation,
+    enterpriseAudioCredentials: fakeThis.enterpriseAudioCredentials,
+    _asyncMirrorDelete: fakeThis._asyncMirrorDelete,
+  };
+  t.after(() => {
+    Object.assign(fakeThis, originals);
+    delete connectorManager.disconnectAll;
+    delete databaseManager.deleteAccountData;
+    tokenState = originalTokenState;
+  });
+  const purged = [];
+  const audio = [];
+  const mirrored = [];
+  const credentials = [];
+  tokenState = { token: "delete-token", generation: 91 };
+  connectorManager.disconnectAll = async () => {};
+  databaseManager.deleteAccountData = () => ({
+    deletedNoteIds: [11, 12],
+    deletedTranscriptionIds: [21, 22],
+  });
+  fakeThis.productEvents = {
+    purge: (accountId) => {
+      purged.push(accountId);
+      throw new Error("product-event storage unavailable");
+    },
+  };
+  fakeThis.audioStorageManager = {
+    deleteAudioForTranscriptions: (ids) => audio.push(...ids),
+  };
+  fakeThis.metaActivation = { purge: () => {} };
+  fakeThis._asyncMirrorDelete = (noteId) => mirrored.push(noteId);
+  fakeThis.enterpriseAudioCredentials = {
+    removeAccount: async (accountId) => credentials.push(accountId),
+  };
+
+  const result = await handlers.get("delete-account-data")({}, "deleted-account", 91);
+
+  assert.deepEqual(result, {
+    success: false,
+    code: "LOCAL_ACCOUNT_CLEANUP_FAILED",
+    error: "product-event storage unavailable",
+  });
+  assert.deepEqual(purged, ["deleted-account"]);
+  assert.deepEqual(audio, [21, 22]);
+  assert.deepEqual(mirrored, [11, 12]);
+  assert.deepEqual(credentials, ["deleted-account"]);
+});
+
+// Official build: a binding request held past the account's erasure must not recreate its
+// queue when the late answer lands. This build never creates the product event collector,
+// so the binding is a no-op that contacts nobody and writes no store.
+test("a product event binding sends nothing and stores nothing for an erased account", async (t) => {
+  const originalApiUrl = process.env.OPENWHISPR_API_URL;
+  const originalTokenState = tokenState;
+  t.after(() => {
+    delete connectorManager.disconnectAll;
+    delete databaseManager.deleteAccountData;
+    tokenState = originalTokenState;
+    if (originalApiUrl === undefined) delete process.env.OPENWHISPR_API_URL;
+    else process.env.OPENWHISPR_API_URL = originalApiUrl;
+  });
+  process.env.OPENWHISPR_API_URL = "https://api.openwhispr.test";
+  connectorManager.disconnectAll = async () => {};
+  databaseManager.deleteAccountData = () => ({ deletedNoteIds: [] });
+  const requests = [];
+  t.mock.method(electronStub.net, "fetch", async (url) => {
+    requests.push(String(url));
+    return { ok: false, status: 401 };
+  });
+  tokenState = { token: "erase-bearer", generation: 93 };
+  await setScope("erased-account", 93);
+
+  assert.equal(fakeThis.productEvents, null);
+  assert.equal(
+    await handlers.get("product-events-record-app-session")(
+      {},
+      { accountId: "erased-account", authGeneration: 93 }
+    ),
+    undefined
+  );
+  const erased = await handlers.get("delete-account-data")({}, "erased-account", 93);
+
+  assert.equal(erased.success, true);
+  assert.ok(!requests.some((url) => url.includes("/api/product-events/")));
+  assert.equal(fs.existsSync(path.join(userDataDirectory, "product-events.json")), false);
+});
+
+// Official build: the store the collector wrote is erased. This build writes none, but
+// Reset App Data still erases one left behind by an official build, interrupted writes too.
+test("Reset App Data erases a product event store left by an official build and interrupted writes", async (t) => {
+  const originalTokenState = tokenState;
+  t.after(() => {
+    delete connectorManager.revokeAllStored;
+    tokenState = originalTokenState;
+  });
+  connectorManager.revokeAllStored = async () => {};
+  tokenState = { token: "reset-bearer", generation: 94 };
+  await setScope("reset-account", 94);
+  await handlers.get("product-events-record-onboarding-completed")(
+    {},
+    { setupMode: "local", flowVersion: "desktop-onboarding-1" }
+  );
+  const file = path.join(userDataDirectory, "product-events.json");
+  assert.equal(fs.existsSync(file), false);
+  fs.writeFileSync(file, JSON.stringify({ events: [] }));
+  fs.copyFileSync(file, `${file}.111.tmp`);
+
+  tokenState = { token: null, generation: 95 };
+  const result = await handlers.get("cleanup-app")({ sender: {} });
+
+  assert.equal(result.success, true);
+  assert.equal(fs.existsSync(file), false);
+  assert.equal(fs.existsSync(`${file}.111.tmp`), false);
 });

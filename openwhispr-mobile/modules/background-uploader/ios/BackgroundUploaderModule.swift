@@ -41,7 +41,7 @@ private enum BackgroundUploaderConstants {
       let finished = retirementFinished
       retirementLock.unlock()
       if finished {
-        DispatchQueue.main.async { BackgroundUploaderAppDelegate.invokeCompletionHandler() }
+        DispatchQueue.main.async { BackgroundUploadRecovery.invokeCompletionHandler() }
       }
       return
     }
@@ -66,7 +66,7 @@ private enum BackgroundUploaderConstants {
     }
     retirementFinished = true
     retirementLock.unlock()
-    DispatchQueue.main.async { BackgroundUploaderAppDelegate.invokeCompletionHandler() }
+    DispatchQueue.main.async { BackgroundUploadRecovery.invokeCompletionHandler() }
   }
   static let pendingTranscriptKey = "keyboard_pending_transcript"
   static let pendingTranscriptJobIdKey = "keyboard_pending_transcript_job_id"
@@ -117,6 +117,20 @@ private final class PendingUpload {
 
 private final class UploadDelegate: NSObject, URLSessionDataDelegate, URLSessionTaskDelegate {
   static let shared = UploadDelegate()
+  // Background relaunches can precede React Native. Both entry points must
+  // retain the same session so pending transfers keep their delegate.
+  static let session: URLSession = {
+    let config = URLSessionConfiguration.background(
+      withIdentifier: BackgroundUploaderConstants.sessionIdentifier
+    )
+    config.sessionSendsLaunchEvents = true
+    config.isDiscretionary = false
+    config.waitsForConnectivity = true
+    config.allowsCellularAccess = true
+    config.timeoutIntervalForRequest = 45
+    config.timeoutIntervalForResource = 60
+    return URLSession(configuration: config, delegate: shared, delegateQueue: nil)
+  }()
   private let lock = NSLock()
   private var pending: [Int: PendingUpload] = [:]
   // Buffers response bytes for tasks not tracked by an in-process promise
@@ -154,7 +168,7 @@ private final class UploadDelegate: NSObject, URLSessionDataDelegate, URLSession
   func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
     // Legacy completion waited only for event delivery:
     // DispatchQueue.main.async {
-    //   BackgroundUploaderAppDelegate.invokeCompletionHandler()
+    //   BackgroundUploadRecovery.invokeCompletionHandler()
     // }
     // The retired hosted session must finish cancellation and invalidation first.
   }
@@ -298,15 +312,12 @@ private final class UploadDelegate: NSObject, URLSessionDataDelegate, URLSession
   }
 }
 
-public class BackgroundUploaderAppDelegate: ExpoAppDelegateSubscriber {
+public enum BackgroundUploadRecovery {
   private static let lock = NSLock()
   private static var pendingCompletionHandler: (() -> Void)?
 
-  public required init() {}
-
-  public func application(
-    _ application: UIApplication,
-    handleEventsForBackgroundURLSession identifier: String,
+  public static func handleEvents(
+    for identifier: String,
     completionHandler: @escaping () -> Void
   ) -> Bool {
     guard identifier == BackgroundUploaderConstants.sessionIdentifier else {
@@ -315,6 +326,8 @@ public class BackgroundUploaderAppDelegate: ExpoAppDelegateSubscriber {
     Self.lock.lock()
     Self.pendingCompletionHandler = completionHandler
     Self.lock.unlock()
+    // UIKit may relaunch us without connecting a scene or initializing Expo modules.
+    // This build only cancels the retired hosted session (never UploadDelegate.session).
     BackgroundUploaderConstants.retireHostedUploads()
     return true
   }
@@ -329,30 +342,16 @@ public class BackgroundUploaderAppDelegate: ExpoAppDelegateSubscriber {
 }
 
 public class BackgroundUploaderModule: Module {
-  private var session: URLSession!
+  // Created only by the hosted upload path, which this build rejects before it runs.
+  private lazy var session: URLSession = UploadDelegate.session
   private let providerTransport = ProviderRequestTransport()
 
   public func definition() -> ModuleDefinition {
     Name("BackgroundUploader")
 
     OnCreate {
-//       let config = URLSessionConfiguration.background(
-//         withIdentifier: BackgroundUploaderConstants.sessionIdentifier
-//       )
-//       config.sessionSendsLaunchEvents = true
-//       config.isDiscretionary = false
-//       config.waitsForConnectivity = true
-//       config.allowsCellularAccess = true
-//       config.timeoutIntervalForRequest = 45
-//       config.timeoutIntervalForResource = 60
-//       self.session = URLSession(
-//         configuration: config,
-//         delegate: UploadDelegate.shared,
-//         delegateQueue: nil
-//       )
-//       // This legacy session carries hosted uploads only. Cancel tasks restored
-//       // from an older build; BYOK uses the separate providerTransport below.
-//       self.session.invalidateAndCancel()
+      // The hosted background session (UploadDelegate.session) is never created in this
+      // build. Cancel tasks restored from an older build; BYOK uses providerTransport below.
       BackgroundUploaderConstants.retireHostedUploads()
     }
 

@@ -225,7 +225,8 @@ const OPENAI_TEXT = {
   credentialRef: 'provider.openai',
 };
 
-// Local Mode keeps dictation on this phone; cleanup runs what is saved for it.
+// Local Mode keeps dictation on this phone; cleanup runs what is saved for it, and so does the voice
+// assistant, which has no on-device version.
 it.each([
   ['a provider', OPENAI_TEXT, { mode: 'providers', providerId: 'openai', modelId: 'gpt-5-mini' }],
   ['legacy hosted', { mode: 'openwhispr' }, { mode: 'local' }],
@@ -237,6 +238,21 @@ it.each([
   const snapshot = snapshotTranscriptionJob('dictation', KEYBOARD_TEXT_SCOPES);
   expect(snapshot.provider).toBe('local');
   expect(snapshot.cleanupRoute).toMatchObject({ ...route, scope: 'cleanup' });
+  expect(snapshot.agentRoute).toMatchObject({
+    mode: 'providers',
+    providerId: 'openai',
+    modelId: 'gpt-5-mini',
+    scope: 'agent',
+  });
+});
+
+// Official build: an unset Local Mode voice assistant ran on OpenWhispr Cloud for an account.
+it('keeps a Local Mode voice assistant with nothing saved off OpenWhispr Cloud', () => {
+  mockProcessing.activeMode = 'private';
+  mockUser = { id: 'u', isAnonymous: false };
+  mockState.config.inference = { dictation: { mode: 'local' } };
+  const snapshot = snapshotTranscriptionJob('dictation', KEYBOARD_TEXT_SCOPES);
+  expect(snapshot.provider).toBe('local');
   expect(snapshot.agentRoute).toEqual({ mode: 'local', scope: 'agent' });
 });
 

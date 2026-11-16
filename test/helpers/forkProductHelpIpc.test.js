@@ -121,6 +121,11 @@ test.beforeEach(() => {
   handlers.clear();
   requests.length = connectorCalls.length = 0;
   process.env.OPENWHISPR_API_URL = "https://retained-official-api.test";
+  register();
+});
+
+function register() {
+  handlers.clear();
   delete require.cache[handlersModulePath];
   const IPCHandlers = require(handlersModulePath);
   target = {
@@ -135,7 +140,7 @@ test.beforeEach(() => {
       get: (value, property) => (property in value ? value[property] : anything()),
     })
   );
-});
+}
 test.afterEach(() => {
   fs.rmSync(userDataDirectory, { recursive: true, force: true });
 });
@@ -265,4 +270,28 @@ test("damaged retained policy falls back to bundled help without rewriting it", 
   assert.equal(help.reason, "unavailable");
   assert.equal(requests.length, 0);
   assert.equal(fs.readFileSync(cachePath, "utf8"), "{");
+});
+
+test("a token left by an official build leaves main's audio and local model policy a guest's", async () => {
+  // Official builds fetch the workspace policy for a held token. Here the hosted
+  // API is off, so that lookup would never answer and the local model gate and
+  // audio controls would refuse every local model, meeting and upload.
+  retainPolicy();
+  officialTokenReads = 0;
+  register();
+  assert.equal(target._audioFeaturePolicy.failure("meeting"), null);
+  assert.equal(target._audioFeaturePolicy.failure("upload"), null);
+  assert.deepEqual(await target._getMainModelPolicy({}, {}), {
+    success: true,
+    managed: false,
+    authGeneration: 7,
+  });
+  assert.deepEqual(await target._getMainModelPolicy({}, { held: true }), {
+    success: true,
+    managed: false,
+    authGeneration: 7,
+  });
+  assert.equal(officialTokenReads, 0);
+  assert.equal(cookieReads, 0);
+  assert.equal(requests.length, 0);
 });

@@ -114,9 +114,10 @@ export function snapshotTextInference(
     const routeKey = scope === 'cleanup' ? 'cleanupRoute' : 'agentRoute';
     const errorKey = scope === 'cleanup' ? 'cleanupUnavailable' : 'agentUnavailable';
     const selection = getInferenceSelection(scope);
-    // A local transcript leaves the phone only for a cleanup provider the user saved.
+    // A local transcript leaves the phone for cleanup only for a provider the user saved.
     // Unset and legacy hosted choices stay on this phone, including when an old session exists.
-    if (provider === 'local' && !(scope === 'cleanup' && selection?.mode === 'providers')) {
+    // The voice assistant runs its own selection, wherever the spoken instruction was transcribed.
+    if (provider === 'local' && scope === 'cleanup' && selection?.mode !== 'providers') {
       result[routeKey] = { mode: 'local', scope };
     } else if (!selection && provider === 'byok') {
       result[errorKey] =

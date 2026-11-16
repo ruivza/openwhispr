@@ -3,8 +3,8 @@
   "afterPack": "scripts/afterPack.js",
   "extraMetadata": {
     "windowsTrayIdentity": true,
-    "shortVersion": "1.10.3.6",
-    "shortVersionWindows": "1.10.3.6"
+    "shortVersion": "1.11.1.1",
+    "shortVersionWindows": "1.11.1.1"
   },
   "productName": "OpenWhispr",
   "protocols": {

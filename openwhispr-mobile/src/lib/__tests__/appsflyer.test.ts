@@ -95,6 +95,7 @@ const mockRegisterSessionReadyListener = jest.fn((listener: () => void): Promise
   mockSessionReadyListener = listener;
   return Promise.resolve();
 });
+const mockGetAppsFlyerUID = jest.fn<Promise<string>, []>(() => Promise.resolve('af-device'));
 const mockStart = jest.fn((): Promise<void> => Promise.resolve());
 const mockStop = jest.fn((): Promise<void> => Promise.resolve());
 const mockLogEvent = jest.fn((): Promise<void> => Promise.resolve());
@@ -121,6 +122,7 @@ jest.mock('react-native-appsflyer', () => ({
     enableDebug: mockEnableDebug,
     registerSessionReadyListener: mockRegisterSessionReadyListener,
     start: mockStart,
+    getAppsFlyerUID: mockGetAppsFlyerUID,
     stop: mockStop,
     logEvent: mockLogEvent,
   },
@@ -189,6 +191,7 @@ beforeEach(() => {
     mockSessionReadyListener = listener;
     return Promise.resolve();
   });
+  mockGetAppsFlyerUID.mockReset().mockResolvedValue('af-device');
   mockStart.mockReset().mockResolvedValue(undefined);
   mockStop.mockReset().mockResolvedValue(undefined);
   mockLogEvent.mockReset().mockResolvedValue(undefined);
@@ -785,7 +788,7 @@ describe('AppsFlyer MVP events', () => {
     await flushPromises();
 
     expect(mockLogEvent).toHaveBeenCalledWith({
-      eventName: 'af_subscribe',
+      eventName: 'subscription_completed',
       eventValues: {
         af_subscription_id: 'pro.monthly',
         placement: 'account_billing_open',

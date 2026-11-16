@@ -64,9 +64,22 @@ jest.mock('@/lib/uuid', () => ({
   randomUUID: jest.fn(() => 'test-uuid-1234'),
 }));
 
+jest.mock('@/store/useAuthStore', () => {
+  const { create } = jest.requireActual('zustand');
+  return { useAuthStore: create(() => ({ user: null })) };
+});
+
+const { useAuthStore: mockAuthStore } = jest.requireMock('@/store/useAuthStore') as {
+  useAuthStore: {
+    setState: (state: { user: { id: string; isAnonymous: boolean } | null }) => void;
+  };
+};
+const ACCOUNT = { id: 'u', isAnonymous: false };
+
 beforeEach(() => {
   for (const key of Object.keys(store)) delete store[key];
   jest.clearAllMocks();
+  mockAuthStore.setState({ user: ACCOUNT });
 });
 
 // ─── Mirror keys ───────────────────────────────────────────────────────────────
@@ -94,25 +107,52 @@ describe('startKeyboardAgentSync mirror keys', () => {
     stop();
   });
 
-  it('writes applicable=1 in cloud mode with agent enabled', () => {
+  // Official build: applicable=1 in cloud mode with agent enabled (OpenWhispr Cloud).
+  it('writes applicable=0 in cloud mode with nothing saved, since Cloud never runs it', () => {
     useConfigStore.setState({
       config: { defaultMode: 'cloud', dictationAgentEnabled: true } as any,
     });
     useProcessingModeStore.setState({ activeMode: 'cloud' });
 
     const stop = startKeyboardAgentSync();
-    expect(store.keyboard_agent_applicable).toBe('1');
+    expect(store.keyboard_agent_applicable).toBe('0');
     stop();
   });
 
-  it('writes applicable=0 in private mode even when agent enabled', () => {
+  // The voice assistant runs its own selection in every mode, Local Mode included.
+  // Official build: an unset voice assistant ran on Cloud for a signed-in account; here it needs
+  // its own provider.
+  it('writes applicable=1 in Local Mode with its own provider saved', () => {
     useConfigStore.setState({
-      config: { defaultMode: 'cloud', dictationAgentEnabled: true } as any,
+      config: {
+        defaultMode: 'private',
+        dictationAgentEnabled: true,
+        inference: { agent: { mode: 'providers', providerId: 'groq', modelId: 'llama' } },
+      } as any,
     });
     useProcessingModeStore.setState({ activeMode: 'private' });
 
     const stop = startKeyboardAgentSync();
+    expect(store.keyboard_agent_applicable).toBe('1');
+    stop();
+  });
+
+  // Cloud refuses the voice assistant without an account; its own provider needs none.
+  it('writes applicable=0 without an account unless the voice assistant has a provider', () => {
+    mockAuthStore.setState({ user: { id: 'a', isAnonymous: true } });
+    useConfigStore.setState({ config: { defaultMode: 'private' } as any });
+    useProcessingModeStore.setState({ activeMode: 'private' });
+
+    const stop = startKeyboardAgentSync();
     expect(store.keyboard_agent_applicable).toBe('0');
+
+    useConfigStore.setState({
+      config: {
+        defaultMode: 'private',
+        inference: { agent: { mode: 'providers', providerId: 'groq', modelId: 'llama' } },
+      } as any,
+    });
+    expect(store.keyboard_agent_applicable).toBe('1');
     stop();
   });
 
@@ -171,7 +211,9 @@ describe('startKeyboardAgentSync mirror keys', () => {
     stop();
   });
 
-  it('updates applicable when switching between On-Device and BYOK modes', () => {
+  // The voice assistant runs its own selection in every mode, so a mode switch alone never
+  // makes it applicable; saving a provider for it does.
+  it('updates applicable when the voice assistant gets a provider, whatever the mode', () => {
     useConfigStore.setState({
       config: { defaultMode: 'private', dictationAgentEnabled: true } as any,
     });
@@ -181,9 +223,17 @@ describe('startKeyboardAgentSync mirror keys', () => {
     expect(store.keyboard_agent_applicable).toBe('0');
 
     useProcessingModeStore.getState().setActiveMode('providers', true);
+    expect(store.keyboard_agent_applicable).toBe('0');
+    useConfigStore.setState({
+      config: {
+        defaultMode: 'providers',
+        dictationAgentEnabled: true,
+        inference: { agent: { mode: 'providers', providerId: 'groq', modelId: 'llama' } },
+      } as any,
+    });
     expect(store.keyboard_agent_applicable).toBe('1');
     useProcessingModeStore.getState().setActiveMode('private', true);
-    expect(store.keyboard_agent_applicable).toBe('0');
+    expect(store.keyboard_agent_applicable).toBe('1');
     stop();
   });
 

@@ -61,6 +61,7 @@ async function transcribeAudio({
       });
     }
   );
+  signal?.throwIfAborted();
   const base = `https://api.${environment}.corti.app/v2`;
 
   debugLogger.debug(
@@ -70,8 +71,8 @@ async function transcribeAudio({
   );
 
   const { interactionId } = await requestJson(token, tenant, `${base}/interactions/`, {
-    signal,
     method: "POST",
+    ...(signal ? { signal } : {}),
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       encounter: {
@@ -89,7 +90,7 @@ async function transcribeAudio({
       `${base}/interactions/${interactionId}/recordings/`,
       {
         method: "POST",
-        signal,
+        ...(signal ? { signal } : {}),
         headers: { "Content-Type": "application/octet-stream" },
         body: Buffer.from(audioBuffer),
       }
@@ -101,7 +102,7 @@ async function transcribeAudio({
       `${base}/interactions/${interactionId}/transcripts/`,
       {
         method: "POST",
-        signal,
+        ...(signal ? { signal } : {}),
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ recordingId, primaryLanguage: language, isDictation: true }),
       }

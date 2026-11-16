@@ -17,7 +17,7 @@ test("BYOK and Custom large files are accepted without a cloud subscription", as
   assert.equal(uploadFileSizeState(25 * MB + 1, base).isLargeFile, true);
 });
 
-test("cloud plans and managed limits remain enforced; cloud chunk hint starts at 4 MiB", async () => {
+test("cloud plan limits remain enforced; cloud chunk hint starts at 4 MiB", async () => {
   const { uploadFileSizeState: state } = await import("../../src/helpers/uploadFilePolicy.ts");
   assert.equal(state(25 * MB, { ...base, cloud: true }).errorKey, null);
   assert.equal(state(25 * MB + 1, { ...base, cloud: true }).errorKey, "paidPlanRequired");
@@ -25,7 +25,9 @@ test("cloud plans and managed limits remain enforced; cloud chunk hint starts at
   assert.equal(state(500 * MB + 1, { ...base, cloud: true, pro: true }).errorKey, "fileTooLarge");
   assert.equal(state(4 * MB, { ...base, cloud: true }).isLargeFile, false);
   assert.equal(state(4 * MB + 1, { ...base, cloud: true }).isLargeFile, true);
-  assert.equal(state(26 * MB, { ...base, managed: true, cloud: true }).errorKey, "byokTooLarge");
+  // Managed audio is split to its endpoint's cap in main.
+  assert.equal(state(600 * MB, { ...base, managed: true, cloud: true }).errorKey, null);
+  assert.equal(state(600 * MB, { ...base, managed: true, cloud: true }).isLargeFile, false);
   assert.equal(state(1000 * MB, { ...base, local: true }).errorKey, null);
   assert.equal(state(1000 * MB, { ...base, local: true }).isLargeFile, false);
 });

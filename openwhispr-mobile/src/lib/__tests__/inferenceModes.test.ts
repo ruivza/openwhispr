@@ -128,7 +128,7 @@ describe('workflowSaveConfig', () => {
         inference: { dictation: { mode: 'openwhispr' }, ...allSaved },
         pinnedInference: ['upload', 'agent'],
       };
-      const next = workflowSaveConfig(config, 'dictation', dictation, from, 'account', true);
+      const next = workflowSaveConfig(config, 'dictation', dictation, from, 'account');
       expect(next.defaultMode).toBe(to);
       expect(next.inference).toEqual({ ...allSaved, dictation });
       expect(next.pinnedInference).toEqual(['upload', 'agent']);
@@ -170,14 +170,16 @@ describe('workflowSaveConfig', () => {
 
   describe('leaving Local Mode', () => {
     it.each(['cloud', 'providers'] as const)(
-      'holds what ran on this phone without a session when going to %s',
+      'holds what ran in Local Mode without a session when going to %s',
       (to) => {
         const dictation = to === 'cloud' ? { mode: 'openwhispr' as const } : groqDictation;
-        const next = workflowSaveConfig(local, 'dictation', dictation, 'private', 'none', true);
+        const next = workflowSaveConfig(local, 'dictation', dictation, 'private', 'none');
         expect(next.inference).toEqual({
           dictation,
           upload: { mode: 'local' },
           cleanup: { mode: 'local' },
+          // Official build: notes and the voice assistant held on OpenWhispr Cloud.
+          // This build keeps notes on this iPhone and holds no voice assistant route.
           notes: { mode: 'local' },
           noteChat: { mode: 'local' },
         });
@@ -270,7 +272,9 @@ describe('workflowSaveConfig', () => {
     expect(next.rememberedInference?.cleanup?.openai).toEqual(openai);
   });
 
-  it('keeps the voice assistant skipped through a round trip in Local Mode', () => {
+  // Bring Your Own Key skipped the voice assistant, so nothing was held for it; Local Mode then ran
+  // it on Cloud, which leaving Local Mode holds.
+  it('holds what Local Mode ran after a round trip from Bring Your Own Key', () => {
     const providers: UserConfig = {
       defaultMode: 'providers',
       inference: { dictation: groqDictation },
@@ -310,23 +314,17 @@ describe('workflowSaveConfig', () => {
     expect(off.inference).not.toHaveProperty('agent');
   });
 
-  // Setup in Local Mode holds only uploads and cleanup; the voice assistant is off there, so a
-  // later switch to Bring Your Own Key leaves it skipped rather than sending it to Cloud.
-  it('leaves the voice assistant unsaved when Local setup is followed by Bring Your Own Key', () => {
+  // Setup in Local Mode holds only uploads and cleanup; a later switch to Bring Your Own Key holds
+  // the rest where Local Mode ran them.
+  it('holds what Local setup ran when it is followed by Bring Your Own Key', () => {
     const setup = dictationModeConfig({ defaultMode: 'cloud' }, 'private');
     const localSetup: UserConfig = { ...setup, ...holdOnDeviceConfig(setup) };
-    const next = workflowSaveConfig(
-      localSetup,
-      'dictation',
-      groqDictation,
-      'private',
-      'session',
-      true,
-    );
+    const next = workflowSaveConfig(localSetup, 'dictation', groqDictation, 'private', 'session');
     expect(next.inference).toEqual({
       dictation: groqDictation,
       upload: { mode: 'local' },
       cleanup: { mode: 'local' },
+      // Official build: notes and the voice assistant held on OpenWhispr Cloud.
       notes: { mode: 'local' },
       noteChat: { mode: 'local' },
     });
@@ -522,7 +520,7 @@ it('holds note chat on this iPhone when dictation leaves Local Mode for Bring Yo
     'private',
   );
   expect(next.inference?.noteChat).toEqual({ mode: 'local' });
-  // Local Mode turns the voice assistant off, so there is nothing to hold for it.
+  // Official build: expect(next.inference?.agent).toEqual({ mode: 'openwhispr' });
   expect(next.inference?.agent).toBeUndefined();
   expect(next.pinnedInference).toContain('noteChat');
 });

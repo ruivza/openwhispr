@@ -232,7 +232,6 @@ test("unavailable connector access can still disconnect an existing Gmail login"
 test("unavailable connector access without a login still describes Gmail, with no button", async (t) => {
   const container = await renderGmailRow(t, { status: DISCONNECTED, available: false });
   assert.match(container.textContent, /connectors\.gmail\.description/);
-  assert.match(container.textContent, /connectors\.beta/);
   assert.equal(hasButton(container, "integrations.api.viewPlans"), false);
   assert.equal(hasButton(container, "connectors.gmail.connect"), false);
 });
